@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "beautifulsoup4>=4.12.3",
     "fastapi>=0.115.6",
+    "trio>=0.28.0",
 ]
 
 [project.urls]

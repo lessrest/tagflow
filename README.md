@@ -203,6 +203,62 @@ def home():
                 text("Welcome!")
 ```
 
+## Live Documents (not working yet)
+
+Tagflow can also be used with live documents that update dynamically in the
+browser. It's a bit like Phoenix LiveView.
+
+Let's look at a simple example of a live document that updates a counter.
+
+```python
+from tagflow import tag, text, document, clear
+from tagflow import TagResponse, DocumentMiddleware, Live
+from trio import sleep
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+live = Live()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This starts the root task that manages live sessions.
+    # It will be stopped gracefully when the server shuts down.
+    async with live.run(app):
+        yield
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(DocumentMiddleware)
+
+@app.get("/counter", response_class=TagResponse)
+async def counter():
+    i = 0
+
+    # A session is a background task that handles WebSocket connections.
+    # It will be started in the task scope of the Live object.
+    # There is some logic to keep sessions alive over reconnections.
+
+    session = await live.session()
+    with tag.html():
+        with tag.head():
+            live.script_tag()
+        with tag.body():
+            with tag.h1():
+                async def loop():
+                    while True:
+                        # A transition is like a transaction.
+                        # After the block exits, the change is sent via WebSocket.
+                        # The browser script applies it using a DOM View Transition.
+                        with session.transition():
+                            clear()
+                            text(str(i))
+                        await sleep(1)
+                        i += 1
+
+                # We can spawn a task in the session's task scope.
+                # All session tasks are cancelled when the session is closed.
+                session.spawn(loop)
+
+```
+
 ## License
 
 Tagflow is open source software released under the MIT license. See the
