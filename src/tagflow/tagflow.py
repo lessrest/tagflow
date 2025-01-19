@@ -7,6 +7,7 @@ import functools
 import uuid
 import xml.etree.ElementTree as ET
 import pathlib
+import random
 
 from io import StringIO
 from typing import (
@@ -38,6 +39,20 @@ from starlette.middleware.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def mint() -> str:
+    """Generate a concise unique ID using base62 encoding (A-Z, a-z, 0-9)."""
+    # Use 48 bits of randomness encoded in base62
+    # This gives us ~281 trillion unique IDs
+    n = random.getrandbits(48)
+    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    result = ""
+    while n:
+        n, remainder = divmod(n, 62)
+        result = chars[remainder] + result
+    # Pad to ensure consistent length
+    return result.zfill(8)
 
 
 # -----------------------------------------------------------------------------
@@ -100,15 +115,19 @@ class Fragment:
     as a complete document or XML fragment.
     """
 
-    live: bool
+    live_session: Optional["Session"]
 
     def __init__(self):
         self.element = ET.Element("fragment")
-        # If `live` is True, we automatically assign IDs to newly created elements
-        self.live = False
+        self.live_session = None
 
     def __str__(self) -> str:
         return self.to_html()
+
+    @property
+    def live(self) -> bool:
+        """Whether this fragment is connected to a live session."""
+        return self.live_session is not None
 
     def to_html(self, compact: bool = True) -> str:
         """
@@ -177,7 +196,7 @@ def _get_or_create_id(element: ET.Element) -> str:
     current_id = element.attrib.get("id")
 
     if not current_id and root_fragment.get().live:
-        new_id = str(uuid.uuid4())
+        new_id = mint()
         element.attrib["id"] = new_id
         return new_id
     return current_id or ""
@@ -566,6 +585,15 @@ class Session(BaseModel):
         """
         self.nursery.start_soon(fn)
 
+    def client_tag(self):
+        """
+        Insert a live document client element with this session's ID.
+        This element will automatically connect to the server and apply
+        mutations to the DOM as they are received.
+        """
+        with tag("tagflow-client", session_id=self.id):
+            pass
+
     async def run(self):
         """
         Main loop for the session.
@@ -658,12 +686,11 @@ class Live:
                 "Live.run() must be called before creating a session."
             )
 
-        # Mark the current root fragment as live
+        # Get the current root fragment
         doc = root_fragment.get()
-        doc.live = True
 
         # Create a session ID, memory channels, and a future
-        session_id = str(uuid.uuid4())
+        session_id = mint()
         send_channel, receive_channel = trio.open_memory_channel(8)
 
         async with future() as session_future:
@@ -689,7 +716,12 @@ class Live:
             self._nursery.start_soon(session_task)
 
             # The consumer side: wait to get the Session from the future
-            return await session_future.consume()
+            sess = await session_future.consume()
+
+            # Set the live session on the document
+            doc.live_session = sess
+
+            return sess
 
     def script_tag(self) -> None:
         """
@@ -743,3 +775,28 @@ class Live:
         async with trio.open_nursery() as nursery:
             nursery.start_soon(recv_loop)
             nursery.start_soon(send_loop)
+
+
+async def spawn(fn: Callable[..., Any]) -> None:
+    """
+    Spawn a new Trio task in the current document's live session nursery.
+    This is helpful if your UI needs to do background polling, timers, etc.
+    """
+    doc = root_fragment.get()
+    if not doc.live_session:
+        raise RuntimeError("Cannot spawn task: document is not live")
+    doc.live_session.spawn(fn)
+
+
+@asynccontextmanager
+async def transition():
+    """
+    Context manager for atomic document updates. Mutations in this
+    context are collected into a Transaction and sent when the
+    block exits.
+    """
+    doc = root_fragment.get()
+    if not doc.live_session:
+        raise RuntimeError("Cannot transition: document is not live")
+    async with doc.live_session.transition():
+        yield

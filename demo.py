@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import List
+import logging
 
 from fastapi import FastAPI
 from tagflow import (
@@ -11,7 +12,11 @@ from tagflow import (
     text,
     attr,
     clear,
+    spawn,
+    transition,
 )
+
+logger = logging.getLogger("tagflow.demo")
 
 # Initialize our Live instance for WebSocket support
 live = Live()
@@ -50,7 +55,9 @@ POSTS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with live.run(app):
+        logger.info("live server started")
         yield
+    logger.info("live server stopped")
 
 
 # Initialize FastAPI with Tagflow middleware
@@ -146,8 +153,13 @@ async def posts():
 @app.get("/counter")
 async def counter():
     session = await live.session()
-
+    logger.info("live session started %s", session.id)
     with layout("Live Counter"):
+        # Insert the web component that connects to the live session.
+        # This will automatically connect to the session and update the DOM
+        # when the session receives updates.
+        session.client_tag()
+
         with tag.div(classes="text-center"):
             with tag.h1(classes="text-4xl font-bold mb-8"):
                 text("Live Counter Demo")
@@ -155,21 +167,33 @@ async def counter():
             with tag.div(
                 classes="bg-white rounded-lg shadow p-8 inline-block"
             ):
-                # Add the live client element
-                live.client_tag(session.id)
-
                 with tag.div(classes="text-6xl font-mono"):
-
+                    # We define a background task that changes the counter value
+                    # every second.
                     async def update_counter():
+                        logger.info("counter task started %s", session.id)
                         i = 0
-                        while True:
-                            async with session.transition():
-                                clear()
-                                text(str(i))
-                            await trio.sleep(1)
-                            i += 1
+                        try:
+                            while True:
+                                # Apply a document transaction to the counter element.
+                                # The mutations are collected and sent as a single
+                                # atomic update to the client.
+                                async with transition():
+                                    clear()
+                                    text(str(i))
 
-                    session.spawn(update_counter)
+                                await trio.sleep(1)
+                                i += 1
+                        finally:
+                            # If the task is cancelled, we stop the counter.
+                            logger.info(
+                                "counter task cancelled %s", session.id
+                            )
+
+                    # Start the task as a child of the live session.
+                    await spawn(update_counter)
+
+    logger.info("rendered counter page for %s", session.id)
 
 
 if __name__ == "__main__":
