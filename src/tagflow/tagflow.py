@@ -28,6 +28,7 @@ from fastapi import (
     Request,
     Response,
     WebSocket,
+    WebSocketDisconnect,
 )
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -174,20 +175,10 @@ def _get_or_create_id(element: ET.Element) -> str:
     they can be tracked for incremental updates.
     """
     current_id = element.attrib.get("id")
-    import rich
 
-    rich.inspect(element)
     if not current_id and root_fragment.get().live:
         new_id = str(uuid.uuid4())
-        logger.info(
-            "Creating new ID for element %s: %s",
-            element,
-            new_id,
-        )
         element.attrib["id"] = new_id
-        import rich
-
-        rich.inspect(element)
         return new_id
     return current_id or ""
 
@@ -688,8 +679,10 @@ class Live:
                     self._sessions[session_id] = sess
                     await session_future.provide(sess)
                     try:
+                        logger.info("Session %s running", session_id)
                         await sess.run()
                     finally:
+                        logger.info("Session %s disconnected", session_id)
                         del self._sessions[session_id]
 
             # Start the session task in the manager's nursery
@@ -730,11 +723,23 @@ class Live:
 
         session = self._sessions[session_id]
         # We'll clone the session's recv channel to read from it locally
-        txs = session.transaction_receiver.clone()
-        # We won't do anything with inbound from the client for now, but
-        # let's at least read from the main channel to keep the connection open.
-        async with txs:
-            # Continuously push updates from the session to the browser
+
+        async def recv_loop():
             while True:
-                msg = await txs.receive()
-                await websocket.send_json(msg.model_dump())
+                try:
+                    await websocket.receive_json()
+                except WebSocketDisconnect:
+                    session.nursery.cancel_scope.cancel()
+                    return
+
+        async def send_loop():
+            txs = session.transaction_receiver.clone()
+            async with txs:
+                # Continuously push updates from the session to the browser
+                while True:
+                    msg = await txs.receive()
+                    await websocket.send_json(msg.model_dump())
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(recv_loop)
+            nursery.start_soon(send_loop)
