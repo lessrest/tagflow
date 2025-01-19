@@ -135,7 +135,7 @@ class TagflowClient extends HTMLElement {
   handleMessage(event) {
     const message = JSON.parse(event.data);
     if (message.type === "update") {
-      if (false && document.startViewTransition) {
+      if (document.startViewTransition) {
         document.startViewTransition(() => {
           this.applyMutations(message.mutations);
         });
