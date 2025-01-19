@@ -1,21 +1,25 @@
 """
-A module for building HTML/XML documents using context managers.
+A module for building HTML/XML documents using context managers, with
+improved organization and a sum-type approach for mutation events.
 """
 
-import uuid
 import functools
+import uuid
 import xml.etree.ElementTree as ET
+import pathlib
 
 from io import StringIO
 from typing import (
     Any,
-    Literal,
+    Union,
     Callable,
-    TypedDict,
+    Literal,
+    Optional,
 )
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from pydantic import BaseModel
+import logging
 
 import trio
 
@@ -26,23 +30,67 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import (
     BaseHTTPMiddleware,
     RequestResponseEndpoint,
 )
 
+logger = logging.getLogger(__name__)
 
-def element(tag_name: str, *klasses: str, **kwargs):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs2):
-            with tag(tag_name, **kwargs):
-                classes(*klasses)
-                return func(*args, **kwargs2)
 
-        return wrapper
+# -----------------------------------------------------------------------------
+# 1. Mutation Event Sum-Type
+# -----------------------------------------------------------------------------
 
-    return decorator
+
+class OpenTagEvent(BaseModel):
+    target: str  # parent element ID
+    id: str  # new element ID
+    tag: str  # HTML tag name
+    attrs: dict[str, str]  # initial attributes
+    type: Literal["openTag"] = "openTag"
+
+
+class CloseTagEvent(BaseModel):
+    target: str  # element ID to close
+    type: Literal["closeTag"] = "closeTag"
+
+
+class SetAttributeEvent(BaseModel):
+    target: str  # element ID
+    name: str  # attribute name
+    value: str  # attribute value
+    type: Literal["setAttribute"] = "setAttribute"
+
+
+class SetTextEvent(BaseModel):
+    target: str  # element ID
+    value: str  # new text
+    type: Literal["setText"] = "setText"
+
+
+class ClearEvent(BaseModel):
+    target: str  # element ID
+    type: Literal["clear"] = "clear"
+
+
+# A discriminated union of the possible events
+MutationEvent = Union[
+    OpenTagEvent, CloseTagEvent, SetAttributeEvent, SetTextEvent, ClearEvent
+]
+
+
+class Transaction(BaseModel):
+    """Holds a list of mutations which can be sent in a single atomic update."""
+
+    mutations: list[MutationEvent]
+    type: Literal["update"] = "update"
+
+
+# -----------------------------------------------------------------------------
+# 2. Fragment: The root of a Tagflow context
+# -----------------------------------------------------------------------------
 
 
 class Fragment:
@@ -51,15 +99,21 @@ class Fragment:
     as a complete document or XML fragment.
     """
 
-    live: bool = False
+    live: bool
 
     def __init__(self):
         self.element = ET.Element("fragment")
+        # If `live` is True, we automatically assign IDs to newly created elements
+        self.live = False
 
     def __str__(self) -> str:
         return self.to_html()
 
     def to_html(self, compact: bool = True) -> str:
+        """
+        Renders the fragment as HTML. By default, it concatenates the
+        top-level elements without indentation or line breaks.
+        """
         if len(self.element) == 0:
             return ""
         elif len(self.element) > 1 and not compact:
@@ -73,7 +127,7 @@ class Fragment:
                 for child in self.element
             )
 
-        # For pretty printing, use BeautifulSoup
+        # For pretty printing, we can rely on BeautifulSoup or your preferred tool
         from bs4 import BeautifulSoup
 
         element = (
@@ -86,72 +140,111 @@ class Fragment:
         return soup.prettify()
 
     def to_xml(self) -> str:
+        """
+        Renders the fragment as XML. If there's more than one top-level
+        element, we raise an error, since XML requires a single root.
+        """
         if len(self.element) > 1:
-            raise ValueError("Fragment has more than one element")
+            raise ValueError("Fragment has more than one root element.")
+
         tree = ET.ElementTree(self.element[0])
         s = StringIO()
         tree.write(s, encoding="unicode", method="xml")
         return s.getvalue()
 
 
-def attr_name_to_xml(name: str) -> str:
-    if name == "classes":
-        return "class"
-    # replace _ with -
-    return name.replace("_", "-").removesuffix("-")
+# -----------------------------------------------------------------------------
+# 3. Context Variables and Transaction Recording
+# -----------------------------------------------------------------------------
 
-
-# Context variables to track the current element and root document
+# The current node in the document to which we are appending content
 node: ContextVar[ET.Element] = ContextVar("node")
-root: ContextVar[Fragment] = ContextVar("root")
 
+# The current document fragment (root)
+root_fragment: ContextVar[Fragment] = ContextVar("root")
 
-class MutationEvent(TypedDict):
-    type: Literal["append", "setAttribute", "setText", "clear"]
-    target: str  # Element ID
-    name: str | None  # For setAttribute
-    value: str | None  # For setAttribute/setText/setTail
-    child: str | None  # For append (child element ID)
-
-
-@dataclass
-class Transaction:
-    mutations: list[MutationEvent]
-
-
-tx: ContextVar[Transaction | None] = ContextVar("tx", default=None)
+# The current transaction, if any
+tx: ContextVar[Optional[Transaction]] = ContextVar("tx", default=None)
 
 
 def _get_or_create_id(element: ET.Element) -> str:
-    """Get or create a unique ID for an element"""
-    id = element.get("id")
-    if not id and root.get().live:
-        id = str(uuid.uuid4())
-        element.set("id", id)
-    return id
+    """
+    Get or create a unique 'id' attribute for an element. If the root
+    document is in 'live' mode, we must ensure elements have IDs so
+    they can be tracked for incremental updates.
+    """
+    current_id = element.attrib.get("id")
+    import rich
+
+    rich.inspect(element)
+    if not current_id and root_fragment.get().live:
+        new_id = str(uuid.uuid4())
+        logger.info(
+            "Creating new ID for element %s: %s",
+            element,
+            new_id,
+        )
+        element.attrib["id"] = new_id
+        import rich
+
+        rich.inspect(element)
+        return new_id
+    return current_id or ""
 
 
 def record_mutation(event: MutationEvent):
-    """Record a mutation if there's an active transaction"""
+    """
+    Records a mutation if there's an active transaction. The transaction
+    is then responsible for bundling these changes and sending them to
+    the client via WebSocket (if in live mode).
+    """
     transaction = tx.get()
-    if transaction:
+    if transaction is not None:
         transaction.mutations.append(event)
+
+
+# -----------------------------------------------------------------------------
+# 4. Public API Context Managers
+# -----------------------------------------------------------------------------
 
 
 @contextmanager
 def document():
-    """Creates a new document context for building HTML/XML content"""
+    """
+    Creates a new document context for building HTML/XML content. The
+    returned value is a Fragment, which can be rendered to HTML or XML.
+    """
     doc = Fragment()
-    token = root.set(doc)
-    token2 = node.set(doc.element)
+    token_root = root_fragment.set(doc)
+    token_node = node.set(doc.element)
     try:
         yield doc
     finally:
-        root.reset(token)
-        node.reset(token2)
+        root_fragment.reset(token_root)
+        node.reset(token_node)
+
+
+# -----------------------------------------------------------------------------
+# 5. Core Tag Building
+# -----------------------------------------------------------------------------
+
+
+def attr_name_to_xml(name: str) -> str:
+    """
+    Convert Pythonic attribute names to valid HTML/XML attribute names.
+    If 'classes' is passed in, that maps to the 'class' attribute.
+    Otherwise, replace underscores with hyphens.
+    """
+    if name == "classes":
+        return "class"
+    return name.replace("_", "-").removesuffix("-")
 
 
 def strs(value: str | list[str]) -> str:
+    """
+    Helper to convert a string or list of strings to a single space-
+    separated string.
+    """
     if isinstance(value, list):
         return " ".join(value)
     return value
@@ -159,42 +252,48 @@ def strs(value: str | list[str]) -> str:
 
 class HTMLTagBuilder:
     """
-    Provides a convenient API for creating HTML elements.
-    Usage: with tag.div(...): or with tag("div", ...):
+    Provides a convenient API for creating HTML elements:
+      with tag.div(class="container"):
+          ...
+    or:
+      with tag("div", id="something"):
+          ...
     """
-
-    def __getattr__(self, name: str) -> Callable[..., Any]:
-        return lambda **kwargs: self.__call__(name, **kwargs)
 
     def __call__(self, tagname: str, **kwargs):
         """
-        Creates a new HTML/XML element with the given tag name and attributes.
-        Returns a context manager for adding child elements.
+        Creates a new HTML/XML element with the given tag name and
+        attributes. Returns a context manager for adding child elements.
         """
-        element = ET.Element(
-            tagname,
-            attrib={
-                attr_name_to_xml(k): "" if v is True else strs(v)
-                for k, v in kwargs.items()
-                if v
-            },
-        )
+        # Convert kwargs to element attributes
+        attrs = {}
+        for k, v in kwargs.items():
+            if v is None or v is False:
+                # skip falsey attributes
+                continue
+            xml_name = attr_name_to_xml(k)
+            # If the attribute is True, set the empty string
+            attrs[xml_name] = "" if v is True else strs(v)
 
-        if "id" not in kwargs and root.get().live:
-            kwargs["id"] = str(uuid.uuid4())
+        # Create the element
+        element = ET.Element(tagname, attrib=attrs)
 
+        # If the document is live, ensure we have an ID
+        if root_fragment.get().live and "id" not in attrs:
+            _get_or_create_id(element)
+
+        # Append to parent
         parent = node.get()
         parent.append(element)
 
-        # Record the append mutation
+        # Record the open tag mutation
         record_mutation(
-            {
-                "type": "append",
-                "target": _get_or_create_id(parent),
-                "child": _get_or_create_id(element),
-                "name": None,
-                "value": None,
-            }
+            OpenTagEvent(
+                target=_get_or_create_id(parent),
+                id=_get_or_create_id(element),
+                tag=tagname,
+                attrs=attrs,
+            )
         )
 
         @contextmanager
@@ -204,8 +303,35 @@ class HTMLTagBuilder:
                 yield element
             finally:
                 node.reset(token)
+                # Record the close tag mutation when the context exits
+                record_mutation(
+                    CloseTagEvent(target=_get_or_create_id(element))
+                )
 
         return context()
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        """
+        Fallback for dot-access style creation:
+            tag.div(id="test")  -> tag("div", id="test")
+        """
+        return lambda **kw: self.__call__(name, **kw)
+
+
+tag = HTMLTagBuilder()
+
+
+def tag_decorator(tag_name: str, *klasses: str, **kwargs):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs2):
+            with tag(tag_name, **kwargs):
+                classes(*klasses)
+                return func(*args, **kwargs2)
+
+        return wrapper
+
+    return decorator
 
 
 class HTMLDecorators:
@@ -215,120 +341,186 @@ class HTMLDecorators:
     """
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
-        return lambda *args, **kwargs: element(name, *args, **kwargs)
+        return lambda *args, **kwargs: tag_decorator(name, *args, **kwargs)
 
     def __call__(
         self, name: str, *klasses: str, **kwargs: Any
     ) -> Callable[[Any], Any]:
-        return element(name, *klasses, **kwargs)
+        return tag_decorator(name, *klasses, **kwargs)
 
 
 html = HTMLDecorators()
-tag = HTMLTagBuilder()
+
+
+# -----------------------------------------------------------------------------
+# 6. Convenience Functions
+# -----------------------------------------------------------------------------
 
 
 def text(content: str):
-    element = node.get()
-    if len(element) > 0:
-        last_child = element[-1]
-        last_child.tail = (last_child.tail or "") + content
+    """
+    Appends text to the current element. If the current element already
+    has children, the text is appended to the tail of the last child.
+    """
+    current_el = node.get()
+    if len(current_el) > 0:
+        last_child = current_el[-1]
+        old_tail = last_child.tail or ""
+        new_tail = old_tail + content
+        last_child.tail = new_tail
+
         record_mutation(
-            {
-                "type": "setText",
-                "target": _get_or_create_id(last_child),
-                "value": last_child.tail,
-                "name": None,
-                "child": None,
-            }
+            SetTextEvent(
+                target=_get_or_create_id(last_child),
+                value=new_tail,
+            )
         )
     else:
-        element.text = (element.text or "") + content
+        old_text = current_el.text or ""
+        new_text = old_text + content
+        current_el.text = new_text
+
         record_mutation(
-            {
-                "type": "setText",
-                "target": _get_or_create_id(element),
-                "value": element.text,
-                "name": None,
-                "child": None,
-            }
+            SetTextEvent(
+                target=_get_or_create_id(current_el),
+                value=new_text,
+            )
         )
 
 
 def attr(name: str, value: str | bool | None = True):
-    element = node.get()
+    """
+    Sets or removes an attribute on the current element. If `value`
+    is None or False, the attribute is removed. If `value` is True,
+    the empty string is used.
+    """
+    current_el = node.get()
     xml_name = attr_name_to_xml(name)
 
     if value is None or value is False:
-        element.attrib.pop(xml_name, None)
+        if xml_name in current_el.attrib:
+            current_el.attrib.pop(xml_name)
     elif value is True:
-        element.set(xml_name, "")
+        current_el.set(xml_name, "")
     else:
-        element.set(xml_name, str(value))
+        current_el.set(xml_name, str(value))
 
-    record_mutation(
-        {
-            "type": "setAttribute",
-            "target": _get_or_create_id(element),
-            "name": xml_name,
-            "value": element.get(xml_name),
-            "child": None,
-        }
-    )
+    # Record the mutation
+    current_val = current_el.get(xml_name)
+    if current_val is not None:
+        record_mutation(
+            SetAttributeEvent(
+                target=_get_or_create_id(current_el),
+                name=xml_name,
+                value=current_val,
+            )
+        )
 
 
 def classes(*names: str):
-    current = node.get().get("class", "").strip()
-    if current and names:
-        current += " "
-    node.get().set("class", current + " ".join(names))
+    """
+    Appends the given class names to the current element's 'class' attribute.
+    """
+    el = node.get()
+    current_classes = el.get("class", "").strip()
+    if current_classes and names:
+        current_classes += " "
+    new_value = current_classes + " ".join(names)
+    el.set("class", new_value)
+
+    record_mutation(
+        SetAttributeEvent(
+            target=_get_or_create_id(el),
+            name="class",
+            value=new_value,
+        )
+    )
 
 
 def dataset(data: dict[str, str]):
+    """
+    Sets data-* attributes from a dict. E.g. dataset({"foo": "bar"})
+    sets the attribute data-foo="bar".
+    """
     for k, v in data.items():
         attr(f"data-{k}", v)
 
 
 def clear():
-    record_mutation(
-        {
-            "type": "clear",
-            "target": _get_or_create_id(node.get()),
-        }
-    )
-    node.get().clear()
+    """
+    Removes all children of the current element. This also records a
+    clear mutation for live updates.
+    """
+    current_el = node.get()
+    for child in current_el:
+        current_el.remove(child)
+    current_el.text = None
+    current_el.tail = None
+    record_mutation(ClearEvent(target=_get_or_create_id(current_el)))
 
 
-def document_html():
-    doc = root.get()
-    assert doc is not None
-    html = doc.to_html()
-    return f"<!doctype html>\n{html}"
+# -----------------------------------------------------------------------------
+# 7. Rendering Helper
+# -----------------------------------------------------------------------------
+
+
+def document_html() -> str:
+    """
+    Returns the entire document as an HTML string, prefixed by the
+    doctype declaration.
+    """
+    doc = root_fragment.get()
+    if not doc:
+        return "<!doctype html><html><body>Error: No root document</body></html>"
+    return f"<!doctype html>\n{doc.to_html()}"
+
+
+# -----------------------------------------------------------------------------
+# 8. FastAPI Response Classes
+# -----------------------------------------------------------------------------
 
 
 class TagResponse(HTMLResponse):
-    def render(self, content: str | None = None) -> bytes | memoryview:
-        doc = root.get()
-        if doc:
+    """
+    A FastAPI-compatible response class that captures the Tagflow
+    document context and renders it as HTML.
+    """
+
+    def render(self, content: Optional[str] = None) -> bytes:
+        doc = root_fragment.get()
+        if doc is not None:
             return document_html().encode("utf-8")
         else:
-            return super().render(content)
+            # If not in a Tagflow context, fallback
+            return super().render(content or "")
 
 
 class XMLResponse(Response):
+    """
+    A FastAPI-compatible response class that captures the Tagflow
+    document context and renders it as XML.
+    """
+
     media_type = "application/xml"
 
     def render(self, content: Any) -> bytes:
-        doc = root.get()
-        if doc:
+        doc = root_fragment.get()
+        if doc is not None:
             return doc.to_xml().encode("utf-8")
         else:
             return str(content).encode("utf-8")
 
 
-class DocumentMiddleware(BaseHTTPMiddleware):
-    """Middleware that sets up a fresh document context for each request.
+# -----------------------------------------------------------------------------
+# 9. Document Middleware
+# -----------------------------------------------------------------------------
 
-    Usage:
+
+class DocumentMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware that sets up a fresh document context for each request.
+
+    Usage in FastAPI:
         app = FastAPI()
         app.add_middleware(DocumentMiddleware)
     """
@@ -341,126 +533,208 @@ class DocumentMiddleware(BaseHTTPMiddleware):
             return response
 
 
-@dataclass
-class Session:
-    """A live session that manages WebSocket connections and updates."""
+# -----------------------------------------------------------------------------
+# 10. Live Document Support
+# -----------------------------------------------------------------------------
+
+
+class Session(BaseModel):
+    """
+    A live session that manages WebSocket connections and updates.
+    Each session is intended to coordinate a single "live" view.
+    """
 
     id: str
     nursery: trio.Nursery
-    send_channel: trio.MemorySendChannel
-    receive_channel: trio.MemoryReceiveChannel
+    send_channel: trio.MemorySendChannel[Transaction]
+    transaction_receiver: trio.MemoryReceiveChannel[Transaction]
+
+    class Config:
+        arbitrary_types_allowed = True
 
     @asynccontextmanager
     async def transition(self):
-        """Context manager for atomic document updates."""
+        """
+        Context manager for atomic document updates. Mutations in this
+        context are collected into a Transaction and sent when the
+        block exits.
+        """
         transaction = Transaction(mutations=[])
         token = tx.set(transaction)
         try:
             yield
-            # Send update through WebSocket with the collected mutations
-            await self.send_channel.send(
-                {"type": "update", "mutations": transaction.mutations}
-            )
+            # After the user code executes, send the aggregated mutations
+            await self.send_channel.send(transaction)
         finally:
             tx.reset(token)
 
-    def spawn(self, fn: Callable) -> None:
-        """Spawn a new task in the session's nursery."""
+    def spawn(self, fn: Callable[..., Any]) -> None:
+        """
+        Spawn a new Trio task in the session's nursery. This is helpful
+        if your UI needs to do background polling, timers, etc.
+        """
         self.nursery.start_soon(fn)
 
     async def run(self):
+        """
+        Main loop for the session.
+        """
         while True:
-            await self.receive_channel.receive()
-            # todo
+            await trio.sleep(1)
 
 
-class Future[T]:
-    send_channel: trio.MemorySendChannel[T]
-    receive_channel: trio.MemoryReceiveChannel[T]
+class FutureValue:
+    """
+    A small wrapper around a memory channel used to produce/consume a single
+    value exactly once. This can be used to return a Session from a background
+    task.
+    """
 
     def __init__(self):
         self.send_channel, self.receive_channel = trio.open_memory_channel(
-            0
+            1
         )
 
-    async def provide(self, value: T):
+    async def provide(self, value: Any):
         await self.send_channel.send(value)
+        await self.send_channel.aclose()
 
-    async def consume(self) -> T:
+    async def consume(self) -> Any:
         return await self.receive_channel.receive()
 
 
 @asynccontextmanager
-async def future[T]():
-    future = Future[T]()
-    with future.send_channel, future.receive_channel:
-        yield future
+async def future():
+    """
+    Produces a context manager that yields a FutureValue. The context manager
+    handles the lifetime of the channels.
+    """
+    f = FutureValue()
+    try:
+        yield f
+    finally:
+        # Ensure channels get closed
+        await f.send_channel.aclose()
+        await f.receive_channel.aclose()
 
 
 class Live:
-    """Manages live document sessions and WebSocket connections."""
+    """
+    Manages live document sessions and their WebSocket connections.
+    To use:
+       live = Live()
+       async with live.run(app):
+           # The server is now set up to handle WS at `/.well-known/tagflow/live.ws`
+    """
 
     def __init__(self):
-        self._nursery: trio.Nursery | None = None
+        self._nursery: Optional[trio.Nursery] = None
         self._sessions: dict[str, Session] = {}
 
     @asynccontextmanager
     async def run(self, app: FastAPI):
-        """Start the live document manager."""
+        """
+        Start the live document manager, hooking the default
+        WebSocket route to handle live updates.
+        """
         async with trio.open_nursery() as nursery:
             self._nursery = nursery
+
+            # Mount static files directory
+            static_dir = pathlib.Path(__file__).parent / "static"
+            app.mount(
+                "/.well-known/tagflow/static",
+                StaticFiles(directory=str(static_dir)),
+                name="tagflow_static",
+            )
+
+            # Register the default live WS endpoint
             app.websocket("/.well-known/tagflow/live.ws")(
                 self.handle_websocket
             )
             yield
-            # Nursery will be cancelled on exit
 
-    async def session(self):
-        """Create a new live session."""
+            # Exiting the context cancels the nursery
+
+    async def session(self) -> Session:
+        """
+        Creates a new live session. The session's background task is managed
+        by the Live manager's nursery. The calling code can then yield within
+        a Tagflow context to produce dynamic content.
+        """
         if not self._nursery:
-            raise RuntimeError("Live.run() must be called first")
+            raise RuntimeError(
+                "Live.run() must be called before creating a session."
+            )
 
-        id = uuid.uuid4()
-        send_channel, receive_channel = trio.open_memory_channel(0)
-
-        doc = root.get()
+        # Mark the current root fragment as live
+        doc = root_fragment.get()
         doc.live = True
+
+        # Create a session ID, memory channels, and a future
+        session_id = str(uuid.uuid4())
+        send_channel, receive_channel = trio.open_memory_channel(8)
 
         async with future() as session_future:
 
             async def session_task():
                 async with trio.open_nursery() as session_nursery:
-                    session = Session(
-                        id=str(id),
+                    sess = Session(
+                        id=session_id,
                         nursery=session_nursery,
                         send_channel=send_channel,
-                        receive_channel=receive_channel,
+                        transaction_receiver=receive_channel,
                     )
-                    self._sessions[str(id)] = session
-                    await session_future.provide(session)
+                    self._sessions[session_id] = sess
+                    await session_future.provide(sess)
                     try:
-                        await session.run()
+                        await sess.run()
                     finally:
-                        del self._sessions[str(id)]
+                        del self._sessions[session_id]
 
-        self._nursery.start_soon(session_task)
+            # Start the session task in the manager's nursery
+            self._nursery.start_soon(session_task)
+
+            # The consumer side: wait to get the Session from the future
+            return await session_future.consume()
 
     def script_tag(self) -> None:
-        """Insert the live document JavaScript code."""
-        # TODO: Implement client-side JavaScript injection
-        pass
+        """
+        Insert the live document JavaScript code and custom element into the current element.
+        """
+        with tag.script(src="/.well-known/tagflow/static/tagflow.js"):
+            pass
+
+    def client_tag(self, session_id: str):
+        """
+        Insert a live document client element with a given session ID.
+        This element will automatically connect to the server and apply
+        mutations to the DOM as they are received.
+        """
+        with tag("tagflow-client", session_id=session_id):
+            pass
 
     async def handle_websocket(self, websocket: WebSocket):
-        """Handle WebSocket connections for live updates."""
+        """
+        Default WebSocket route for receiving live updates from the browser
+        and sending out mutation events.
+        """
         await websocket.accept()
-        hello = await websocket.receive_json()
-        id = hello["id"]
-        session = self._sessions[id]
-        if not session:
-            raise RuntimeError(f"Session {id} not found")
 
-        recv = session.receive_channel.clone()
-        with recv:
+        # For simplicity, assume the first message from the client is the session ID
+        hello = await websocket.receive_json()
+        session_id = hello.get("id")
+        if session_id not in self._sessions:
+            await websocket.close(code=1008)
+            return
+
+        session = self._sessions[session_id]
+        # We'll clone the session's recv channel to read from it locally
+        txs = session.transaction_receiver.clone()
+        # We won't do anything with inbound from the client for now, but
+        # let's at least read from the main channel to keep the connection open.
+        async with txs:
+            # Continuously push updates from the session to the browser
             while True:
-                update = await recv.receive()
-                await websocket.send_json(update)
+                msg = await txs.receive()
+                await websocket.send_json(msg.model_dump())

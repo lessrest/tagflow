@@ -43,7 +43,7 @@ uv add tagflow
 ## Usage
 
 ```python
-from tagflow import tag, text, document
+from tagflow import tag, text, document, attr
 
 def page(title: str):
   # open a <html> tag in the current document
@@ -203,7 +203,7 @@ def home():
                 text("Welcome!")
 ```
 
-## Live Documents (not working yet)
+## Live Documents (early working prototype)
 
 Tagflow can also be used with live documents that update dynamically in the
 browser. It's a bit like Phoenix LiveView.
@@ -248,6 +248,7 @@ async def counter():
                         # After the block exits, the change is sent via WebSocket.
                         # The browser script applies it using a DOM View Transition.
                         with session.transition():
+                            # This applies to the H1 element which is the current node.
                             clear()
                             text(str(i))
                         await sleep(1)
