@@ -205,49 +205,44 @@ def home():
 
 ## Live Documents (early working prototype)
 
-Tagflow can also be used with live documents that update dynamically in the
-browser. It's a bit like Phoenix LiveView.
+Tagflow also offers "live documents" that asynchronous server tasks can update
+in real time after the initial page load. It works a bit like Phoenix LiveView:
+the browser runs a script that exposes a DOM mutation capability via WebSocket,
+letting the server send updates to elements in the document.
 
 Let's look at a simple example of a live document that updates a counter.
 
 ```python
-from tagflow import tag, text, document, clear
+from tagflow import tag, text, document, clear, spawn, transition
 from tagflow import TagResponse, DocumentMiddleware, Live
-from trio import sleep
-from fastapi import FastAPI
+
 from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from trio import sleep
+
 live = Live()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # This starts the root task that manages live sessions.
-    # It will be stopped gracefully when the server shuts down.
-    async with live.run(app):
-        yield
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=live.run)
 app.add_middleware(DocumentMiddleware)
 
 @app.get("/counter", response_class=TagResponse)
 async def counter():
-    i = 0
-
-    # A session is a background task that handles WebSocket connections.
-    # It will be started in the task scope of the Live object.
-    # There is some logic to keep sessions alive over reconnections.
-
     session = await live.session()
+
     with tag.html():
-        with tag.head():
-            live.script_tag()
         with tag.body():
+            live.script_tag()
+            session.client_tag()
+
             with tag.h1():
                 async def loop():
+                    i = 0
                     while True:
                         # A transition is like a transaction.
                         # After the block exits, the change is sent via WebSocket.
                         # The browser script applies it using a DOM View Transition.
-                        with session.transition():
+                        with transition():
                             # This applies to the H1 element which is the current node.
                             clear()
                             text(str(i))
@@ -256,9 +251,16 @@ async def counter():
 
                 # We can spawn a task in the session's task scope.
                 # All session tasks are cancelled when the session is closed.
-                session.spawn(loop)
-
+                spawn(loop)
 ```
+
+This feature is currently based on Trio for structured concurrency with
+nurseries. It works with the Hypercorn ASGI server and FastAPI. It might be nice
+to change it into a plain ASGI middleware; maybe also supporting other async
+systems via `anyio`.
+
+It remains to be seen whether the "session" concept makes sense, and how to
+think about session lifecycles, reconnects, etc.
 
 ## License
 

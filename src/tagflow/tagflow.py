@@ -4,7 +4,6 @@ improved organization and a sum-type approach for mutation events.
 """
 
 import functools
-import uuid
 import xml.etree.ElementTree as ET
 import pathlib
 import random
