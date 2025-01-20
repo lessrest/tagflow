@@ -1,3 +1,12 @@
+# /// script
+# dependencies = [
+#     "tagflow",
+#     "trio",
+#     "hypercorn",
+#     "rich",
+# ]
+# ///
+
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from typing import List
@@ -201,8 +210,14 @@ if __name__ == "__main__":
     import hypercorn.trio
     import hypercorn.config
     import logging
+    from rich.logging import RichHandler
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.NOTSET,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler()],
+    )
 
     config = hypercorn.config.Config()
     config.bind = ["localhost:8000"]
