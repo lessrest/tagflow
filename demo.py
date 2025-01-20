@@ -216,7 +216,7 @@ if __name__ == "__main__":
         level=logging.NOTSET,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler()],
+        handlers=[RichHandler(rich_tracebacks=True)],
     )
 
     config = hypercorn.config.Config()
