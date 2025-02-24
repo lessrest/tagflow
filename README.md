@@ -64,8 +64,8 @@ def page(title: str):
               # another way to set attributes
               attr("contenteditable")
               attr("spellcheck", False)
-              # classes can also be an iterable
-              attr("class", ["text-lg text-gray-900", "font-bold"])
+              # classes can also be a nested list of strings
+              attr("class", ["text-lg text-gray-900", ["font-bold", "italic"]])
               # after emitting content you can't change the attributes
               text("This is a paragraph.")
 
@@ -84,7 +84,7 @@ from tagflow import tag, text, html
 
 # decorator nesting lets us skip indentation for basic structure
 @html.main(lang="en")
-@html.article(classes="w-prose mx-auto")
+@html.article("w-prose mx-auto", ["font-bold", "italic"], data_role="content")
 def welcome(name: str):
     with tag.h1():
         text(f"Welcome, {name}!")
@@ -109,12 +109,12 @@ def page(title: str):
             with tag.script(src="https://cdn.tailwindcss.com"):
                 pass
 
-        with tag.body(classes="bg-gray-50 p-4"):
+        with tag.body("bg-gray-50 p-4"):
             yield
 
 @contextmanager
 def article():
-    with tag.article(classes="w-prose mx-auto"):
+    with tag.article("w-prose mx-auto"):
         yield
 
 @dataclass
@@ -135,7 +135,7 @@ def index(posts: list[Post]):
             try:
                 render_post(post)
             except ValueError as e:
-                with tag.p(classes="text-red-500"):
+                with tag.p("text-red-500"):
                     text("Error rendering post: ")
                     text(str(e))
 
@@ -149,7 +149,7 @@ def render_post(post: Post):
         text(post.title)
 
     for block in post.content:
-        with tag.p(classes="mb-4"):
+        with tag.p("mb-4"):
             text(block)
 ```
 
