@@ -8,6 +8,7 @@ import logging
 import pathlib
 import functools
 import xml.etree.ElementTree as ET
+import re
 
 from io import StringIO
 from typing import (
@@ -242,12 +243,12 @@ def document():
 def attr_name_to_xml(name: str) -> str:
     """
     Convert Pythonic attribute names to valid HTML/XML attribute names.
-    If 'classes' is passed in, that maps to the 'class' attribute.
-    Otherwise, replace underscores with hyphens.
+    If 'classes' or 'class_' is passed in, that maps to the 'class' attribute.
+    Otherwise, replace underscores between word characters with hyphens.
     """
-    if name == "classes":
+    if name == "classes" or name == "class_":
         return "class"
-    return name.replace("_", "-").removesuffix("-")
+    return re.sub(r"(\w)_(\w)", r"\1-\2", name)
 
 
 # Type for class names that can be arbitrarily nested lists of strings

@@ -219,6 +219,27 @@ def test_multiple_text_nodes():
     assert "<p>Hello World</p>" in result
 
 
+def test_underscore_attributes():
+    """Test underscore to hyphen conversion in attribute names, preserving leading underscores"""
+    with document() as doc:
+        with tag(
+            "div",
+            data_user_id="123",  # should become data-user-id
+            _custom="preserved",  # should stay as _custom
+            _my_attr="value",  # should become _my-attr
+            some_long_name="test",  # should become some-long-name
+            _="special",  # single underscore should stay as _
+        ):
+            pass
+
+    result = doc.to_html()
+    assert 'data-user-id="123"' in result
+    assert '_custom="preserved"' in result
+    assert '_my-attr="value"' in result
+    assert 'some-long-name="test"' in result
+    assert '_="special"' in result  # test single underscore preservation
+
+
 def test_exact_html_document():
     """Test creating a complete HTML document with exact output matching"""
     with document() as doc:
