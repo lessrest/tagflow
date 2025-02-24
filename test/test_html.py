@@ -59,14 +59,49 @@ def test_attributes():
 
 
 def test_classes():
-    """Test adding CSS classes"""
+    """Test adding CSS classes with nested lists and merging behavior"""
     with document() as doc:
+        # Test basic class addition
         with tag("div"):
             classes("foo", "bar")
             text("Content")
 
+        # Test nested lists in classes function
+        with tag("div"):
+            classes(["a", ["b", "c"]], "d")
+            text("Content")
+
+        # Test empty values are filtered
+        with tag("div"):
+            classes("x", "", ["y", None, ["", "z"]])
+            text("Content")
+
     result = doc.to_html(compact=True)
     assert '<div class="foo bar">Content</div>' in result
+    assert '<div class="a b c d">Content</div>' in result
+    assert '<div class="x y z">Content</div>' in result
+
+
+def test_tag_class_merging():
+    """Test class merging behavior in tag creation"""
+    with document() as doc:
+        with tag("div", "one", ["two", "three"]):
+            text("A")
+
+        with tag("div", "one", ["two"], class_="override"):
+            text("B")
+
+        with tag("div", "one", classes=["two", ["three", "four"]]):
+            text("C")
+
+        with tag("div", ["a", ["b", "c"]], ["d"], class_="e f"):
+            text("D")
+
+    result = doc.to_html(compact=True)
+    assert '<div class="one two three">A</div>' in result
+    assert '<div class="one two override">B</div>' in result
+    assert '<div class="one two three four">C</div>' in result
+    assert '<div class="a b c d e f">D</div>' in result
 
 
 def test_dataset():
@@ -235,19 +270,19 @@ def test_exact_html_document():
 
 
 def test_html_decorator_variations():
-    """Test different ways of using the HTMLDecorators API"""
+    """Test different ways of using the HTMLDecorators API with nested classes"""
 
-    @html.div(class_="container")
+    @html.div(["container", ["nested", "classes"]])
     def container():
         with tag("h1"):
             text("Main Title")
 
-    @html("section", "content-section", data_role="content")
+    @html("section", ["content", ["section"]], data_role="content")
     def section():
         with tag("p"):
             text("Section content")
 
-    @html.article(id="post-1", class_="blog-post")
+    @html.article(id="post-1", class_=["blog", ["post", "featured"]])
     def article():
         container()
         section()
@@ -260,11 +295,14 @@ def test_html_decorator_variations():
     result = doc.to_html(compact=True)
 
     # Check the outer article element
-    assert '<article id="post-1" class="blog-post">' in result
+    assert '<article id="post-1" class="blog post featured">' in result
     # Check the nested container
-    assert '<div class="container"><h1>Main Title</h1></div>' in result
+    assert (
+        '<div class="container nested classes"><h1>Main Title</h1></div>'
+        in result
+    )
     # Check the section with multiple attributes
-    assert 'class="content-section"' in result
+    assert 'class="content section"' in result
     assert 'data-role="content"' in result
     assert "<p>Section content</p>" in result
     # Check the footer

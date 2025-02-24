@@ -15,6 +15,7 @@ from typing import (
     Callable,
     Literal,
     Optional,
+    List,
 )
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
@@ -249,14 +250,20 @@ def attr_name_to_xml(name: str) -> str:
     return name.replace("_", "-").removesuffix("-")
 
 
-def strs(value: str | list[str]) -> str:
+# Type for class names that can be arbitrarily nested lists of strings
+ClassValue = Union[str, List["ClassValue"]]
+
+
+def strs(value: Union[str, ClassValue]) -> str:
     """
-    Helper to convert a string or list of strings to a single space-
-    separated string.
+    Helper to convert a string or nested list of strings to a single space-
+    separated string. Handles arbitrarily nested lists of strings.
     """
-    if isinstance(value, list):
-        return " ".join(value)
-    return value
+    if isinstance(value, str):
+        return value
+    elif isinstance(value, list):
+        return " ".join(strs(v) for v in value if v)
+    return ""
 
 
 class HTMLTagBuilder:
@@ -269,7 +276,7 @@ class HTMLTagBuilder:
           ...
     """
 
-    def __call__(self, tagname: str, **kwargs):
+    def __call__(self, tagname: str, *klasses: ClassValue, **kwargs):
         """
         Creates a new HTML/XML element with the given tag name and
         attributes. Returns a context manager for adding child elements.
@@ -283,6 +290,14 @@ class HTMLTagBuilder:
             xml_name = attr_name_to_xml(k)
             # If the attribute is True, set the empty string
             attrs[xml_name] = "" if v is True else strs(v)
+
+        # Now merge any klasses with the class attribute if present
+        if klasses:
+            class_attr = attrs.get("class")
+            class_values = list(klasses)
+            if class_attr:
+                class_values.append(class_attr)
+            attrs["class"] = strs(class_values)
 
         # Create the element
         element = ET.Element(tagname, attrib=attrs)
@@ -324,18 +339,17 @@ class HTMLTagBuilder:
         Fallback for dot-access style creation:
             tag.div(id="test")  -> tag("div", id="test")
         """
-        return lambda **kw: self.__call__(name, **kw)
+        return lambda *args, **kw: self.__call__(name, *args, **kw)
 
 
 tag = HTMLTagBuilder()
 
 
-def tag_decorator(tag_name: str, *klasses: str, **kwargs):
+def tag_decorator(tag_name: str, *klasses: ClassValue, **kwargs):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs2):
-            with tag(tag_name, **kwargs):
-                classes(*klasses)
+            with tag(tag_name, *klasses, **kwargs):
                 return func(*args, **kwargs2)
 
         return wrapper
@@ -426,15 +440,16 @@ def attr(name: str, value: str | bool | None = True):
         )
 
 
-def classes(*names: str):
+def classes(*names: ClassValue):
     """
     Appends the given class names to the current element's 'class' attribute.
+    Handles arbitrarily nested lists of strings.
     """
     el = node.get()
     current_classes = el.get("class", "").strip()
     if current_classes and names:
         current_classes += " "
-    new_value = current_classes + " ".join(names)
+    new_value = current_classes + strs(list(names))
     el.set("class", new_value)
 
     record_mutation(
