@@ -3,24 +3,23 @@ A module for building HTML/XML documents using context managers, with
 improved organization and a sum-type approach for mutation events.
 """
 
+import random
+import logging
+import pathlib
 import functools
 import xml.etree.ElementTree as ET
-import pathlib
-import random
 
 from io import StringIO
 from typing import (
     Any,
-    Union,
-    Callable,
-    Literal,
-    Optional,
     List,
+    Union,
+    Literal,
+    Callable,
+    Optional,
 )
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
-from pydantic import BaseModel
-import logging
 
 import trio
 
@@ -31,6 +30,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import (
@@ -253,6 +253,23 @@ def attr_name_to_xml(name: str) -> str:
 # Type for class names that can be arbitrarily nested lists of strings
 ClassValue = Union[str, List["ClassValue"]]
 
+# Type for any HTML attribute value
+AttrValue = Union[str, int, float, bool, ClassValue]
+
+
+def attr_value_to_str(value: AttrValue, attr_name: str) -> str:
+    """Convert an attribute value to its string representation for HTML output."""
+    if value is True:
+        return ""
+    if isinstance(value, (str, list)):
+        return strs(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    raise TypeError(
+        f"Attribute values must be strings, numbers, booleans, or lists. "
+        f"Got {type(value)} for attribute '{attr_name}'"
+    )
+
 
 def strs(value: Union[str, ClassValue]) -> str:
     """
@@ -276,7 +293,12 @@ class HTMLTagBuilder:
           ...
     """
 
-    def __call__(self, tagname: str, *klasses: ClassValue, **kwargs):
+    def __call__(
+        self,
+        tagname: str,
+        *klasses: ClassValue,
+        **kwargs: AttrValue,
+    ):
         """
         Creates a new HTML/XML element with the given tag name and
         attributes. Returns a context manager for adding child elements.
@@ -288,8 +310,7 @@ class HTMLTagBuilder:
                 # skip falsey attributes
                 continue
             xml_name = attr_name_to_xml(k)
-            # If the attribute is True, set the empty string
-            attrs[xml_name] = "" if v is True else strs(v)
+            attrs[xml_name] = attr_value_to_str(v, k)
 
         # Now merge any klasses with the class attribute if present
         if klasses:

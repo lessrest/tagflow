@@ -51,11 +51,26 @@ def test_attributes():
     with document() as doc:
         with tag("input", type="text", required=True, disabled=False):
             pass
+        with tag("div", tabindex=1, data_count=42):
+            pass
 
     result = doc.to_html(compact=True)
     assert 'type="text"' in result
     assert "required" in result
     assert "disabled" not in result
+    assert 'tabindex="1"' in result
+    assert 'data-count="42"' in result
+
+    # Test invalid attribute types
+    with pytest.raises(TypeError) as exc_info:
+        with document() as doc:
+            with tag("div", data_obj={"foo": "bar"}):
+                pass
+    assert (
+        "Attribute values must be strings, numbers, booleans, or lists"
+        in str(exc_info.value)
+    )
+    assert "dict" in str(exc_info.value)
 
 
 def test_classes():
