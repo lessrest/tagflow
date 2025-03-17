@@ -13,6 +13,7 @@ from typing import List
 import logging
 
 from fastapi import FastAPI
+import rich
 from tagflow import (
     DocumentMiddleware,
     Live,
@@ -205,10 +206,26 @@ async def counter():
     logger.info("rendered counter page for %s", session.id)
 
 
+# It's kind of crazy that we need this just to see if a port is already in use
+# because Trio gives us nested exception groups.
+def flatten_exception_group[T: BaseException](
+    e: BaseExceptionGroup[T],
+) -> List[T]:
+    es = []
+    for ee in e.exceptions:
+        if isinstance(ee, BaseExceptionGroup):
+            es.extend(flatten_exception_group(ee))
+        else:
+            es.append(ee)
+    return es
+
+
 if __name__ == "__main__":
     import trio
+    import errno
     import hypercorn.trio
     import hypercorn.config
+    import hypercorn.typing
     import logging
     from rich.logging import RichHandler
 
@@ -219,13 +236,38 @@ if __name__ == "__main__":
         handlers=[RichHandler(rich_tracebacks=True)],
     )
 
-    config = hypercorn.config.Config()
-    config.bind = ["localhost:8000"]
-    # Use trio worker class
-    config.worker_class = "trio"
+    async def serve(ports: List[int]):
+        config = hypercorn.config.Config()
+        config.worker_class = "trio"
 
-    trio.run(
-        hypercorn.trio.serve,
-        app,
-        config,
-    )
+        asgi_app: hypercorn.typing.ASGIFramework = app  # type: ignore
+        for port in ports:
+            config.bind = [f"127.0.0.1:{port}"]
+            await hypercorn.trio.serve(
+                asgi_app,
+                config,
+                mode="asgi",
+            )
+
+    for port in range(8000, 8010):
+        try:
+            trio.run(serve, [port])
+            break
+        except* OSError as e:
+            for ee in flatten_exception_group(e):
+                if ee.errno == errno.EADDRINUSE:
+                    logger.info("port %s is already in use", port)
+                else:
+                    raise
+
+    # for port in range(8000, 8010):
+
+    #     try:
+    #         trio.run(serve, port)
+    #     except* OSError as e:
+    #         for ee in e.exceptions:
+    #             print(ee)
+    #             if isinstance(ee, OSError) and ee.errno == errno.EADDRINUSE:
+    #                 logger.info("port %s is already in use", port)
+    #             else:
+    #                 raise

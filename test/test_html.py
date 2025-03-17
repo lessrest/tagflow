@@ -64,7 +64,7 @@ def test_attributes():
     # Test invalid attribute types
     with pytest.raises(TypeError) as exc_info:
         with document() as doc:
-            with tag("div", data_obj={"foo": "bar"}):
+            with tag("div", data_obj={"foo": "bar"}):  # type: ignore
                 pass
     assert (
         "Attribute values must be strings, numbers, booleans, or lists"

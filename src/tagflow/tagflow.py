@@ -252,7 +252,7 @@ def attr_name_to_xml(name: str) -> str:
 
 
 # Type for class names that can be arbitrarily nested lists of strings
-ClassValue = Union[str, List["ClassValue"]]
+ClassValue = Union[str, None, List["ClassValue"]]
 
 # Type for any HTML attribute value
 AttrValue = Union[str, int, float, bool, ClassValue]
@@ -367,7 +367,7 @@ class HTMLTagBuilder:
 tag = HTMLTagBuilder()
 
 
-def tag_decorator(tag_name: str, *klasses: ClassValue, **kwargs):
+def tag_decorator(tag_name: str, *klasses: ClassValue, **kwargs: AttrValue):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs2):
@@ -389,7 +389,7 @@ class HTMLDecorators:
         return lambda *args, **kwargs: tag_decorator(name, *args, **kwargs)
 
     def __call__(
-        self, name: str, *klasses: str, **kwargs: Any
+        self, name: str, *klasses: ClassValue, **kwargs: AttrValue
     ) -> Callable[[Any], Any]:
         return tag_decorator(name, *klasses, **kwargs)
 
@@ -433,7 +433,7 @@ def text(content: str):
         )
 
 
-def attr(name: str, value: str | bool | None = True):
+def attr(name: str, value: AttrValue):
     """
     Sets or removes an attribute on the current element. If `value`
     is None or False, the attribute is removed. If `value` is True,
