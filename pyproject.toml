@@ -1,6 +1,6 @@
 [project]
 name = "tagflow"
-version = "0.8.0"
+version = "0.9.0"
 description = "Block-oriented HTML generation that works with ordinary control flow"
 readme = "README.md"
 authors = [
