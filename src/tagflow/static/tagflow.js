@@ -185,7 +185,12 @@ class TagflowClient extends HTMLElement {
    */
   handleOpenTag({ target, id, tag, attrs = {} }) {
     const parent = this.findTarget(target, "parent");
-    const element = document.createElement(tag);
+
+    const svg = parent.closest("svg") || tag === "svg";
+    const element = svg
+      ? document.createElementNS("http://www.w3.org/2000/svg", tag)
+      : document.createElement(tag);
+
     element.id = id;
 
     // Apply initial attributes
