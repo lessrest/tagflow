@@ -193,6 +193,18 @@ root_fragment: ContextVar[Fragment] = ContextVar("root")
 tx: ContextVar[Optional[Transaction]] = ContextVar("tx", default=None)
 
 
+@contextmanager
+def enter(element: ET.Element):
+    """
+    Context manager for entering an element.
+    """
+    token = node.set(element)
+    try:
+        yield element
+    finally:
+        node.reset(token)
+
+
 def _get_or_create_id(element: ET.Element) -> str:
     """
     Get or create a unique 'id' attribute for an element. If the root

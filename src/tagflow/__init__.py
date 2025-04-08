@@ -1,4 +1,5 @@
 from .tagflow import (
+    enter,
     tag,
     html,
     text,
@@ -17,6 +18,7 @@ from .tagflow import (
 
 
 __all__ = [
+    "enter",
     "tag",
     "html",
     "text",
