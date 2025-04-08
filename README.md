@@ -219,7 +219,7 @@ from tagflow import TagResponse, DocumentMiddleware, Live
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from trio import sleep
+import anyio
 
 live = Live()
 
@@ -246,7 +246,7 @@ async def counter():
                             # This applies to the H1 element which is the current node.
                             clear()
                             text(str(i))
-                        await sleep(1)
+                        await anyio.sleep(1)
                         i += 1
 
                 # We can spawn a task in the session's task scope.
@@ -254,10 +254,8 @@ async def counter():
                 spawn(loop)
 ```
 
-This feature is currently based on Trio for structured concurrency with
-nurseries. It works with the Hypercorn ASGI server and FastAPI. It might be nice
-to change it into a plain ASGI middleware; maybe also supporting other async
-systems via `anyio`.
+This feature uses AnyIO for structured concurrency and can work with either
+`asyncio` or `trio` as the backend.
 
 It remains to be seen whether the "session" concept makes sense, and how to
 think about session lifecycles, reconnects, etc.

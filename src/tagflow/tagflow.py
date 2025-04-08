@@ -22,7 +22,12 @@ from typing import (
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
 
-import trio
+import anyio
+from anyio.abc import TaskGroup
+from anyio.streams.memory import (
+    MemoryObjectSendStream,
+    MemoryObjectReceiveStream,
+)
 
 from fastapi import (
     FastAPI,
@@ -591,9 +596,9 @@ class Session(BaseModel):
     """
 
     id: str
-    nursery: trio.Nursery
-    send_channel: trio.MemorySendChannel[Transaction]
-    transaction_receiver: trio.MemoryReceiveChannel[Transaction]
+    taskgroup: TaskGroup
+    send_channel: MemoryObjectSendStream[Transaction]
+    transaction_receiver: MemoryObjectReceiveStream[Transaction]
 
     class Config:
         arbitrary_types_allowed = True
@@ -616,10 +621,10 @@ class Session(BaseModel):
 
     def spawn(self, fn: Callable[..., Any]) -> None:
         """
-        Spawn a new Trio task in the session's nursery. This is helpful
+        Spawn a new task in the session's task group. This is helpful
         if your UI needs to do background polling, timers, etc.
         """
-        self.nursery.start_soon(fn)
+        self.taskgroup.start_soon(fn)
 
     def client_tag(self):
         """
@@ -635,7 +640,7 @@ class Session(BaseModel):
         Main loop for the session.
         """
         while True:
-            await trio.sleep(1)
+            await anyio.sleep(1)
 
 
 class FutureValue:
@@ -646,8 +651,8 @@ class FutureValue:
     """
 
     def __init__(self):
-        self.send_channel, self.receive_channel = trio.open_memory_channel(
-            1
+        self.send_channel, self.receive_channel = (
+            anyio.create_memory_object_stream(1)
         )
 
     async def provide(self, value: Any):
@@ -683,7 +688,7 @@ class Live:
     """
 
     def __init__(self):
-        self._nursery: Optional[trio.Nursery] = None
+        self._taskgroup: Optional[TaskGroup] = None
         self._sessions: dict[str, Session] = {}
 
     @asynccontextmanager
@@ -692,8 +697,8 @@ class Live:
         Start the live document manager, hooking the default
         WebSocket route to handle live updates.
         """
-        async with trio.open_nursery() as nursery:
-            self._nursery = nursery
+        async with anyio.create_task_group() as taskgroup:
+            self._taskgroup = taskgroup
 
             # Mount static files directory
             static_dir = pathlib.Path(__file__).parent / "static"
@@ -709,15 +714,15 @@ class Live:
             )
             yield
 
-            # Exiting the context cancels the nursery
+            # Exiting the context cancels the task group
 
     async def session(self) -> Session:
         """
         Creates a new live session. The session's background task is managed
-        by the Live manager's nursery. The calling code can then yield within
+        by the Live manager's task group. The calling code can then yield within
         a Tagflow context to produce dynamic content.
         """
-        if not self._nursery:
+        if not self._taskgroup:
             raise RuntimeError(
                 "Live.run() must be called before creating a session."
             )
@@ -727,15 +732,15 @@ class Live:
 
         # Create a session ID, memory channels, and a future
         session_id = mint()
-        send_channel, receive_channel = trio.open_memory_channel(8)
+        send_channel, receive_channel = anyio.create_memory_object_stream(8)
 
         async with future() as session_future:
 
             async def session_task():
-                async with trio.open_nursery() as session_nursery:
+                async with anyio.create_task_group() as session_taskgroup:
                     sess = Session(
                         id=session_id,
-                        nursery=session_nursery,
+                        taskgroup=session_taskgroup,
                         send_channel=send_channel,
                         transaction_receiver=receive_channel,
                     )
@@ -748,8 +753,8 @@ class Live:
                         logger.info("Session %s disconnected", session_id)
                         del self._sessions[session_id]
 
-            # Start the session task in the manager's nursery
-            self._nursery.start_soon(session_task)
+            # Start the session task in the manager's task group
+            self._taskgroup.start_soon(session_task)
 
             # The consumer side: wait to get the Session from the future
             sess = await session_future.consume()
@@ -797,7 +802,7 @@ class Live:
                 try:
                     await websocket.receive_json()
                 except WebSocketDisconnect:
-                    session.nursery.cancel_scope.cancel()
+                    session.taskgroup.cancel_scope.cancel()
                     return
 
         async def send_loop():
@@ -805,17 +810,20 @@ class Live:
             async with txs:
                 # Continuously push updates from the session to the browser
                 while True:
-                    msg = await txs.receive()
-                    await websocket.send_json(msg.model_dump())
+                    try:
+                        msg = await txs.receive()
+                        await websocket.send_json(msg.model_dump())
+                    except anyio.EndOfStream:
+                        break
 
-        async with trio.open_nursery() as nursery:
+        async with anyio.create_task_group() as nursery:
             nursery.start_soon(recv_loop)
             nursery.start_soon(send_loop)
 
 
 async def spawn(fn: Callable[..., Any]) -> None:
     """
-    Spawn a new Trio task in the current document's live session nursery.
+    Spawn a new task in the current document's live session task group.
     This is helpful if your UI needs to do background polling, timers, etc.
     """
     doc = root_fragment.get()

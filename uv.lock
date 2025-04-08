@@ -640,6 +640,7 @@ name = "tagflow"
 version = "0.7.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "beautifulsoup4" },
     { name = "fastapi" },
     { name = "hypercorn" },
@@ -663,6 +664,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.8.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "hypercorn", specifier = ">=0.17.3" },

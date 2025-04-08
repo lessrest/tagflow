@@ -2,25 +2,29 @@
 # dependencies = [
 #     "tagflow",
 #     "trio",
+#     "anyio",
 #     "hypercorn",
 #     "rich",
 # ]
 # ///
 
-from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
-from typing import List
 import logging
 
+from typing import List
+from contextlib import contextmanager, asynccontextmanager
+from dataclasses import dataclass
+
+import anyio
+
 from fastapi import FastAPI
-import rich
+
 from tagflow import (
-    DocumentMiddleware,
     Live,
     TagResponse,
+    DocumentMiddleware,
     tag,
-    text,
     attr,
+    text,
     clear,
     spawn,
     transition,
@@ -192,7 +196,7 @@ async def counter():
                                     clear()
                                     text(str(i))
 
-                                await trio.sleep(1)
+                                await anyio.sleep(1)
                                 i += 1
                         finally:
                             # If the task is cancelled, we stop the counter.
@@ -206,29 +210,28 @@ async def counter():
     logger.info("rendered counter page for %s", session.id)
 
 
-# It's kind of crazy that we need this just to see if a port is already in use
-# because Trio gives us nested exception groups.
-def flatten_exception_group[T: BaseException](
-    e: BaseExceptionGroup[T],
-) -> List[T]:
-    es = []
-    for ee in e.exceptions:
-        if isinstance(ee, BaseExceptionGroup):
-            es.extend(flatten_exception_group(ee))
-        else:
-            es.append(ee)
-    return es
-
-
 if __name__ == "__main__":
-    import trio
     import errno
-    import hypercorn.trio
+    import logging
+    import argparse
+
     import hypercorn.config
     import hypercorn.typing
-    import logging
+
     from rich.logging import RichHandler
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Run the Tagflow demo server"
+    )
+    parser.add_argument(
+        "--asyncio",
+        action="store_true",
+        help="Use asyncio backend instead of trio",
+    )
+    args = parser.parse_args()
+
+    # Configure logging
     logging.basicConfig(
         level=logging.NOTSET,
         format="%(message)s",
@@ -236,38 +239,74 @@ if __name__ == "__main__":
         handlers=[RichHandler(rich_tracebacks=True)],
     )
 
-    async def serve(ports: List[int]):
-        config = hypercorn.config.Config()
-        config.worker_class = "trio"
+    # Load the appropriate backend
+    if args.asyncio:
+        logger.info("Using asyncio backend")
+        import asyncio
 
-        asgi_app: hypercorn.typing.ASGIFramework = app  # type: ignore
-        for port in ports:
-            config.bind = [f"127.0.0.1:{port}"]
-            await hypercorn.trio.serve(
-                asgi_app,
-                config,
-                mode="asgi",
-            )
+        import hypercorn.asyncio
 
-    for port in range(8000, 8010):
-        try:
-            trio.run(serve, [port])
-            break
-        except* OSError as e:
-            for ee in flatten_exception_group(e):
-                if ee.errno == errno.EADDRINUSE:
-                    logger.info("port %s is already in use", port)
+        async def serve(ports: List[int]):
+            config = hypercorn.config.Config()
+            config.worker_class = "asyncio"
+
+            asgi_app: hypercorn.typing.ASGIFramework = app  # type: ignore
+            for port in ports:
+                config.bind = [f"127.0.0.1:{port}"]
+                try:
+                    await hypercorn.asyncio.serve(
+                        asgi_app,
+                        config,
+                        mode="asgi",
+                    )
+                    # If we get here, the server has successfully started
+                    break
+                except OSError as e:
+                    if e.errno == errno.EADDRINUSE:
+                        logger.info("port %s is already in use", port)
+                    else:
+                        raise
+
+        # We need to convert range to a list to match the function's signature
+        asyncio.run(serve(list(range(8000, 8010))))
+    else:
+        logger.info("Using trio backend")
+        import trio
+        import hypercorn.trio
+
+        # It's kind of crazy that we need this just to see if a port is already in use
+        # because Trio gives us nested exception groups.
+        def flatten_exception_group[T: BaseException](
+            e: BaseExceptionGroup[T],
+        ) -> List[T]:
+            es = []
+            for ee in e.exceptions:
+                if isinstance(ee, BaseExceptionGroup):
+                    es.extend(flatten_exception_group(ee))
                 else:
-                    raise
+                    es.append(ee)
+            return es
 
-    # for port in range(8000, 8010):
+        async def serve(ports: List[int]):
+            config = hypercorn.config.Config()
+            config.worker_class = "trio"
 
-    #     try:
-    #         trio.run(serve, port)
-    #     except* OSError as e:
-    #         for ee in e.exceptions:
-    #             print(ee)
-    #             if isinstance(ee, OSError) and ee.errno == errno.EADDRINUSE:
-    #                 logger.info("port %s is already in use", port)
-    #             else:
-    #                 raise
+            asgi_app: hypercorn.typing.ASGIFramework = app  # type: ignore
+            for port in ports:
+                config.bind = [f"127.0.0.1:{port}"]
+                await hypercorn.trio.serve(
+                    asgi_app,
+                    config,
+                    mode="asgi",
+                )
+
+        for port in range(8000, 8010):
+            try:
+                trio.run(serve, [port])
+                break
+            except* OSError as e:
+                for ee in flatten_exception_group(e):
+                    if ee.errno == errno.EADDRINUSE:
+                        logger.info("port %s is already in use", port)
+                    else:
+                        raise

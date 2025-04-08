@@ -1,6 +1,6 @@
 [project]
 name = "tagflow"
-version = "0.7.0"
+version = "0.8.0"
 description = "Block-oriented HTML generation that works with ordinary control flow"
 readme = "README.md"
 authors = [
@@ -17,6 +17,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: XML",
  ]
 dependencies = [
+    "anyio>=4.8.0",
     "beautifulsoup4>=4.12.3",
     "fastapi>=0.115.6",
     "hypercorn>=0.17.3",
