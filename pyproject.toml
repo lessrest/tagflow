@@ -1,11 +1,9 @@
 [project]
 name = "tagflow"
-version = "0.10.0"
+version = "0.11.0"
 description = "Block-oriented HTML generation that works with ordinary control flow"
 readme = "README.md"
-authors = [
-    { name = "Mikael Brockman", email = "mikael@brockman.se" }
-]
+authors = [{ name = "Mikael Brockman", email = "mikael@brockman.se" }]
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -15,7 +13,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Text Processing :: Markup :: HTML",
     "Topic :: Text Processing :: Markup :: XML",
- ]
+]
 dependencies = [
     "anyio>=4.8.0",
     "beautifulsoup4>=4.12.3",
