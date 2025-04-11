@@ -143,9 +143,7 @@ class Fragment:
         if len(self.element) == 0:
             return ""
         elif len(self.element) > 1 and not compact:
-            raise ValueError(
-                "Pretty printing requires exactly one root element"
-            )
+            raise ValueError("Pretty printing requires exactly one root element")
 
         if compact:
             return "".join(
@@ -156,12 +154,8 @@ class Fragment:
         # For pretty printing, we can rely on BeautifulSoup or your preferred tool
         from bs4 import BeautifulSoup
 
-        element = (
-            self.element[0] if len(self.element) == 1 else self.element
-        )
-        rough_string = ET.tostring(
-            element, encoding="unicode", method="html"
-        )
+        element = self.element[0] if len(self.element) == 1 else self.element
+        rough_string = ET.tostring(element, encoding="unicode", method="html")
         soup = BeautifulSoup(rough_string, "html.parser")
         return soup.prettify()
 
@@ -367,9 +361,7 @@ class HTMLTagBuilder:
             finally:
                 node.reset(token)
                 # Record the close tag mutation when the context exits
-                record_mutation(
-                    CloseTagEvent(target=_get_or_create_id(element))
-                )
+                record_mutation(CloseTagEvent(target=_get_or_create_id(element)))
 
         return context()
 
@@ -588,9 +580,7 @@ class DocumentMiddleware(BaseHTTPMiddleware):
         app.add_middleware(DocumentMiddleware)
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         with document():
             response = await call_next(request)
             return response
@@ -659,8 +649,9 @@ class Session(BaseModel):
         """
         Main loop for the session.
         """
-        while True:
-            await anyio.sleep(1)
+        async with self.send_channel:
+            while True:
+                await anyio.sleep(1)
 
 
 class FutureValue:
@@ -671,9 +662,7 @@ class FutureValue:
     """
 
     def __init__(self):
-        self.send_channel, self.receive_channel = (
-            anyio.create_memory_object_stream(1)
-        )
+        self.send_channel, self.receive_channel = anyio.create_memory_object_stream(1)
 
     async def provide(self, value: Any):
         await self.send_channel.send(value)
@@ -729,9 +718,7 @@ class Live:
             )
 
             # Register the default live WS endpoint
-            app.websocket("/.well-known/tagflow/live.ws")(
-                self.handle_websocket
-            )
+            app.websocket("/.well-known/tagflow/live.ws")(self.handle_websocket)
             yield
 
             # Exiting the context cancels the task group
@@ -743,9 +730,7 @@ class Live:
         a Tagflow context to produce dynamic content.
         """
         if not self._taskgroup:
-            raise RuntimeError(
-                "Live.run() must be called before creating a session."
-            )
+            raise RuntimeError("Live.run() must be called before creating a session.")
 
         # Get the current root fragment
         doc = root_fragment.get()
