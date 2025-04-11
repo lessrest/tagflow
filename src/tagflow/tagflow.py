@@ -620,14 +620,15 @@ class Session(BaseModel):
         """
         Context manager for atomic document updates. Mutations in this
         context are collected into a Transaction and sent when the
-        block exits.
+        block exits. If no mutations are recorded, the transaction is not
+        sent.
         """
         transaction = Transaction(mutations=[])
         token = tx.set(transaction)
         try:
             yield
-            # After the user code executes, send the aggregated mutations
-            await self.send_channel.send(transaction)
+            if transaction.mutations:
+                await self.send_channel.send(transaction)
         finally:
             tx.reset(token)
 
@@ -637,6 +638,13 @@ class Session(BaseModel):
         if your UI needs to do background polling, timers, etc.
         """
         self.taskgroup.start_soon(fn)
+
+    def cancel(self):
+        """
+        Cancel the session. This will close the WebSocket connection and
+        stop the task group.
+        """
+        self.taskgroup.cancel_scope.cancel()
 
     def client_tag(self):
         """
