@@ -1,6 +1,6 @@
 [project]
 name = "tagflow"
-version = "0.11.0"
+version = "0.12.0"
 description = "Block-oriented HTML generation that works with ordinary control flow"
 readme = "README.md"
 authors = [{ name = "Mikael Brockman", email = "mikael@brockman.se" }]

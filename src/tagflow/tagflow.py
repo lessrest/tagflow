@@ -845,7 +845,8 @@ async def transition():
     block exits.
     """
     doc = root_fragment.get()
-    if not doc.live_session:
-        raise RuntimeError("Cannot transition: document is not live")
-    async with doc.live_session.transition():
+    if doc.live_session:
+        async with doc.live_session.transition():
+            yield
+    else:
         yield
