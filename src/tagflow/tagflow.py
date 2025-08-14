@@ -36,7 +36,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import (
@@ -602,8 +602,7 @@ class Session(BaseModel):
     send_channel: MemoryObjectSendStream[Transaction]
     transaction_receiver: MemoryObjectReceiveStream[Transaction]
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @asynccontextmanager
     async def transition(self):
