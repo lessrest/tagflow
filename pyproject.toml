@@ -20,13 +20,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+starlette = [
+    "starlette>=0.41.0",
+]
 fastapi = [
     "fastapi>=0.115.6",
     "hypercorn>=0.17.3",
-]
-bs4 = [
-    "beautifulsoup4>=4.12.3",
-    "rich>=13.9.4",
 ]
 
 [project.urls]
