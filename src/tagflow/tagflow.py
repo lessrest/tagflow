@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import re
 
 from io import StringIO
+from dataclasses import dataclass, asdict, field
 from typing import (
     Any,
     List,
@@ -29,33 +30,49 @@ from anyio.streams.memory import (
     MemoryObjectReceiveStream,
 )
 
+# Import Starlette (base framework used by FastAPI)
 try:
-    from fastapi import (
-        FastAPI,
-        Request,
-        Response,
-        WebSocket,
-        WebSocketDisconnect,
-    )
-    from pydantic import BaseModel
-    from fastapi.responses import HTMLResponse
-    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import Response, HTMLResponse
+    from starlette.requests import Request
+    from starlette.websockets import WebSocket, WebSocketDisconnect
     from starlette.middleware.base import (
         BaseHTTPMiddleware,
         RequestResponseEndpoint,
     )
-    HAS_FASTAPI = True
+    HAS_STARLETTE = True
 except ImportError:
-    HAS_FASTAPI = False
-    # Provide stub classes when fastapi is not available
-    BaseModel = object
-    HTMLResponse = object
-    Response = object
-    BaseHTTPMiddleware = object
+    HAS_STARLETTE = False
+    # Stub classes for Starlette types
+    class Response:
+        """Stub Response class."""
+        media_type = "text/html"
+        def __init__(self, content=None, **kwargs):
+            self.content = content
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+        def render(self, content):
+            return str(content).encode("utf-8") if content else b""
+
+    class HTMLResponse(Response):
+        """Stub HTMLResponse class."""
+        media_type = "text/html"
+
+    class BaseHTTPMiddleware:
+        """Stub middleware class."""
+        pass
+
     Request = object
     RequestResponseEndpoint = object
     WebSocket = object
     WebSocketDisconnect = Exception
+
+# Import FastAPI-specific stuff (optional, only for FastAPI integrations)
+try:
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
     FastAPI = object
     StaticFiles = object
 
@@ -81,7 +98,8 @@ def mint() -> str:
 # -----------------------------------------------------------------------------
 
 
-class OpenTagEvent(BaseModel):
+@dataclass
+class OpenTagEvent:
     target: str  # parent element ID
     id: str  # new element ID
     tag: str  # HTML tag name
@@ -89,25 +107,29 @@ class OpenTagEvent(BaseModel):
     type: Literal["openTag"] = "openTag"
 
 
-class CloseTagEvent(BaseModel):
+@dataclass
+class CloseTagEvent:
     target: str  # element ID to close
     type: Literal["closeTag"] = "closeTag"
 
 
-class SetAttributeEvent(BaseModel):
+@dataclass
+class SetAttributeEvent:
     target: str  # element ID
     name: str  # attribute name
     value: str  # attribute value
     type: Literal["setAttribute"] = "setAttribute"
 
 
-class SetTextEvent(BaseModel):
+@dataclass
+class SetTextEvent:
     target: str  # element ID
     value: str  # new text
     type: Literal["setText"] = "setText"
 
 
-class ClearEvent(BaseModel):
+@dataclass
+class ClearEvent:
     target: str  # element ID
     type: Literal["clear"] = "clear"
 
@@ -118,7 +140,8 @@ MutationEvent = Union[
 ]
 
 
-class Transaction(BaseModel):
+@dataclass
+class Transaction:
     """Holds a list of mutations which can be sent in a single atomic update."""
 
     mutations: list[MutationEvent]
@@ -166,9 +189,9 @@ class Fragment:
                 for child in self.element
             )
 
-        # For pretty printing, we can rely on BeautifulSoup or your preferred tool
+        # For pretty printing, use BeautifulSoup
         from bs4 import BeautifulSoup
-
+        
         element = self.element[0] if len(self.element) == 1 else self.element
         rough_string = ET.tostring(element, encoding="unicode", method="html")
         soup = BeautifulSoup(rough_string, "html.parser")
@@ -606,7 +629,8 @@ class DocumentMiddleware(BaseHTTPMiddleware):
 # -----------------------------------------------------------------------------
 
 
-class Session(BaseModel):
+@dataclass
+class Session:
     """
     A live session that manages WebSocket connections and updates.
     Each session is intended to coordinate a single "live" view.
@@ -616,9 +640,6 @@ class Session(BaseModel):
     taskgroup: TaskGroup
     send_channel: MemoryObjectSendStream[Transaction]
     transaction_receiver: MemoryObjectReceiveStream[Transaction]
-
-    class Config:
-        arbitrary_types_allowed = True
 
     @asynccontextmanager
     async def transition(self):
@@ -832,7 +853,7 @@ class Live:
                 while True:
                     try:
                         msg = await txs.receive()
-                        await websocket.send_json(msg.model_dump())
+                        await websocket.send_json(asdict(msg))
                     except anyio.EndOfStream:
                         break
 
