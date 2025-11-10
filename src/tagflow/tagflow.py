@@ -52,6 +52,12 @@ except ImportError:
     HTMLResponse = object
     Response = object
     BaseHTTPMiddleware = object
+    Request = object
+    RequestResponseEndpoint = object
+    WebSocket = object
+    WebSocketDisconnect = Exception
+    FastAPI = object
+    StaticFiles = object
 
 logger = logging.getLogger(__name__)
 
