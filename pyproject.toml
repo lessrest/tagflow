@@ -16,11 +16,17 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.8.0",
-    "beautifulsoup4>=4.12.3",
+    "trio>=0.28.0",
+]
+
+[project.optional-dependencies]
+fastapi = [
     "fastapi>=0.115.6",
     "hypercorn>=0.17.3",
+]
+bs4 = [
+    "beautifulsoup4>=4.12.3",
     "rich>=13.9.4",
-    "trio>=0.28.0",
 ]
 
 [project.urls]

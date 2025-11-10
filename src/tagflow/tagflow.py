@@ -29,20 +29,29 @@ from anyio.streams.memory import (
     MemoryObjectReceiveStream,
 )
 
-from fastapi import (
-    FastAPI,
-    Request,
-    Response,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from pydantic import BaseModel
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import (
-    BaseHTTPMiddleware,
-    RequestResponseEndpoint,
-)
+try:
+    from fastapi import (
+        FastAPI,
+        Request,
+        Response,
+        WebSocket,
+        WebSocketDisconnect,
+    )
+    from pydantic import BaseModel
+    from fastapi.responses import HTMLResponse
+    from fastapi.staticfiles import StaticFiles
+    from starlette.middleware.base import (
+        BaseHTTPMiddleware,
+        RequestResponseEndpoint,
+    )
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+    # Provide stub classes when fastapi is not available
+    BaseModel = object
+    HTMLResponse = object
+    Response = object
+    BaseHTTPMiddleware = object
 
 logger = logging.getLogger(__name__)
 
