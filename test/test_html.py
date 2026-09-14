@@ -10,6 +10,8 @@ from tagflow import (
     classes,
     dataset,
     document,
+    clear,
+    enter,
 )
 
 
@@ -343,3 +345,38 @@ def test_html_decorator_variations():
     assert "<p>Section content</p>" in result
     # Check the footer
     assert "<footer>Article footer</footer>" in result
+
+
+def test_clear_removes_all_children_but_preserves_attributes_and_tail():
+    with document() as doc:
+        with tag.div(id="container") as element:
+            text("Before")
+            for label in ["one", "two", "three", "four"]:
+                with tag.span():
+                    text(label)
+        text("After")
+        with enter(element):
+            clear()
+    assert doc.to_html() == '<div id="container"></div>After'
+
+
+def test_attr_flattens_nested_class_values():
+    with document() as doc:
+        with tag.div():
+            attr("class", ["one", ["two", None, "three"]])
+    assert doc.to_html() == '<div class="one two three"></div>'
+
+
+def test_attribute_names_with_single_letter_segments():
+    with document() as doc:
+        with tag.div(data_a_b_c="value"):
+            attr("aria_a_b_c", "other")
+    assert doc.to_html() == (
+        '<div data-a-b-c="value" aria-a-b-c="other"></div>'
+    )
+
+
+@pytest.mark.parametrize("response_type", [TagResponse, XMLResponse])
+def test_response_falls_back_without_document(response_type):
+    response = response_type(content="plain")
+    assert response.render("plain") == b"plain"

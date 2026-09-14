@@ -40,7 +40,9 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 package = true
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     # Linter and formatter
     "ruff==0.*",
     # Static type checker
@@ -52,7 +54,7 @@ dev-dependencies = [
     # Auto-rerun pytest on file changes
     "pytest-watcher==0.*",
     # Run tests in parallel
-    "pytest-xdist==3.6.1",
+    "pytest-xdist>=3.6.1",
     # Coverage reporting plugin for pytest
     "pytest-cov==6.*",
     # Code coverage measurement tool
@@ -60,12 +62,21 @@ dev-dependencies = [
     # Used only for comment wrapping functionality
     "autopep8==2.*",
     # Watchfiles for file watching
-    "watchfiles==0.21.0",
+    "watchfiles>=0.21.0",
+    # Exercise both AnyIO backends and HTTP integrations
+    "trio>=0.28.0",
+    "httpx>=0.28.0",
+    "rich>=13.9.4",
 ]
 
 [tool.ruff]
 line-length = 76
 target-version = "py312"
+
+[tool.ruff.lint]
+# Preserve the original Ruff defaults across tool upgrades. In particular,
+# keep nested tag contexts readable rather than imposing simplification rules.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.isort]
 lines-between-types = 1

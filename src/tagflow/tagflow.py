@@ -11,9 +11,10 @@ import xml.etree.ElementTree as ET
 import re
 
 from io import StringIO
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from typing import (
     Any,
+    TYPE_CHECKING,
     List,
     Union,
     Literal,
@@ -39,42 +40,55 @@ try:
         BaseHTTPMiddleware,
         RequestResponseEndpoint,
     )
+
     HAS_STARLETTE = True
 except ImportError:
     HAS_STARLETTE = False
-    # Stub classes for Starlette types
-    class Response:
-        """Stub Response class."""
-        media_type = "text/html"
-        def __init__(self, content=None, **kwargs):
-            self.content = content
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-        def render(self, content):
-            return str(content).encode("utf-8") if content else b""
+    # Keep standalone rendering available without optional web dependencies.
+    # Type check integrations against the real framework classes above.
+    if TYPE_CHECKING:
+        raise
+    else:
 
-    class HTMLResponse(Response):
-        """Stub HTMLResponse class."""
-        media_type = "text/html"
+        class Response:
+            """Standalone response renderer, not an ASGI response."""
 
-    class BaseHTTPMiddleware:
-        """Stub middleware class."""
-        pass
+            media_type = "text/html"
 
-    Request = object
-    RequestResponseEndpoint = object
-    WebSocket = object
-    WebSocketDisconnect = Exception
+            def __init__(self, content=None, **kwargs):
+                self.content = content
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+            def render(self, content):
+                return str(content).encode("utf-8") if content else b""
+
+        class HTMLResponse(Response):
+            """Standalone HTML response renderer."""
+
+            media_type = "text/html"
+
+        class BaseHTTPMiddleware:
+            """Placeholder when Starlette is not installed."""
+
+        Request = object
+        RequestResponseEndpoint = object
+        WebSocket = object
+        WebSocketDisconnect = Exception
 
 # Import FastAPI-specific stuff (optional, only for FastAPI integrations)
 try:
     from fastapi import FastAPI
     from fastapi.staticfiles import StaticFiles
+
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
-    FastAPI = object
-    StaticFiles = object
+    if TYPE_CHECKING:
+        raise
+    else:
+        FastAPI = object
+        StaticFiles = object
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +195,9 @@ class Fragment:
         if len(self.element) == 0:
             return ""
         elif len(self.element) > 1 and not compact:
-            raise ValueError("Pretty printing requires exactly one root element")
+            raise ValueError(
+                "Pretty printing requires exactly one root element"
+            )
 
         if compact:
             return "".join(
@@ -191,9 +207,13 @@ class Fragment:
 
         # For pretty printing, use BeautifulSoup
         from bs4 import BeautifulSoup
-        
-        element = self.element[0] if len(self.element) == 1 else self.element
-        rough_string = ET.tostring(element, encoding="unicode", method="html")
+
+        element = (
+            self.element[0] if len(self.element) == 1 else self.element
+        )
+        rough_string = ET.tostring(
+            element, encoding="unicode", method="html"
+        )
         soup = BeautifulSoup(rough_string, "html.parser")
         return soup.prettify()
 
@@ -297,7 +317,7 @@ def attr_name_to_xml(name: str) -> str:
     """
     if name == "classes" or name == "class_":
         return "class"
-    return re.sub(r"(\w)_(\w)", r"\1-\2", name)
+    return re.sub(r"(?<=\w)_(?=\w)", "-", name)
 
 
 # Type for class names that can be arbitrarily nested lists of strings
@@ -399,7 +419,9 @@ class HTMLTagBuilder:
             finally:
                 node.reset(token)
                 # Record the close tag mutation when the context exits
-                record_mutation(CloseTagEvent(target=_get_or_create_id(element)))
+                record_mutation(
+                    CloseTagEvent(target=_get_or_create_id(element))
+                )
 
         return context()
 
@@ -495,7 +517,7 @@ def attr(name: str, value: AttrValue):
     elif value is True:
         current_el.set(xml_name, "")
     else:
-        current_el.set(xml_name, str(value))
+        current_el.set(xml_name, attr_value_to_str(value, name))
 
     # Record the mutation
     current_val = current_el.get(xml_name)
@@ -545,10 +567,9 @@ def clear():
     clear mutation for live updates.
     """
     current_el = node.get()
-    for child in current_el:
-        current_el.remove(child)
+    del current_el[:]
     current_el.text = None
-    current_el.tail = None
+    # The tail belongs to the parent, not this element's contents.
     record_mutation(ClearEvent(target=_get_or_create_id(current_el)))
 
 
@@ -562,7 +583,7 @@ def document_html() -> str:
     Returns the entire document as an HTML string, prefixed by the
     doctype declaration.
     """
-    doc = root_fragment.get()
+    doc = root_fragment.get(None)
     if not doc:
         return "<!doctype html><html><body>Error: No root document</body></html>"
     return f"<!doctype html>\n{doc.to_html()}"
@@ -580,12 +601,12 @@ class TagResponse(HTMLResponse):
     """
 
     def render(self, content: Optional[str] = None) -> bytes:
-        doc = root_fragment.get()
+        doc = root_fragment.get(None)
         if doc is not None:
             return document_html().encode("utf-8")
         else:
             # If not in a Tagflow context, fallback
-            return super().render(content or "")
+            return bytes(super().render(content or ""))
 
 
 class XMLResponse(Response):
@@ -597,7 +618,7 @@ class XMLResponse(Response):
     media_type = "application/xml"
 
     def render(self, content: Any) -> bytes:
-        doc = root_fragment.get()
+        doc = root_fragment.get(None)
         if doc is not None:
             return doc.to_xml().encode("utf-8")
         else:
@@ -618,7 +639,9 @@ class DocumentMiddleware(BaseHTTPMiddleware):
         app.add_middleware(DocumentMiddleware)
     """
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ):
         with document():
             response = await call_next(request)
             return response
@@ -698,7 +721,9 @@ class FutureValue:
     """
 
     def __init__(self):
-        self.send_channel, self.receive_channel = anyio.create_memory_object_stream(1)
+        self.send_channel, self.receive_channel = (
+            anyio.create_memory_object_stream(1)
+        )
 
     async def provide(self, value: Any):
         await self.send_channel.send(value)
@@ -754,10 +779,16 @@ class Live:
             )
 
             # Register the default live WS endpoint
-            app.websocket("/.well-known/tagflow/live.ws")(self.handle_websocket)
-            yield
-
-            # Exiting the context cancels the task group
+            app.websocket("/.well-known/tagflow/live.ws")(
+                self.handle_websocket
+            )
+            try:
+                yield
+            finally:
+                # Task groups wait for children on normal exit; sessions run
+                # indefinitely, so shutdown must explicitly cancel them.
+                self._taskgroup = None
+                taskgroup.cancel_scope.cancel()
 
     async def session(self) -> Session:
         """
@@ -766,7 +797,9 @@ class Live:
         a Tagflow context to produce dynamic content.
         """
         if not self._taskgroup:
-            raise RuntimeError("Live.run() must be called before creating a session.")
+            raise RuntimeError(
+                "Live.run() must be called before creating a session."
+            )
 
         # Get the current root fragment
         doc = root_fragment.get()

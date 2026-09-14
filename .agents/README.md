@@ -22,5 +22,12 @@ sbcl --noinform --non-interactive --eval '(require :asdf)' \
   --eval '(asdf:test-system "tagflow")'
 ```
 
-`demo.py` has separate inline script dependencies; these are not part of the
-package lockfile or installed by setup. No demo server starts automatically.
+The development dependencies include Trio and Rich for `demo.py`, and HTTPX
+for integration tests. To use the prepared environment and local Tagflow code
+rather than the demo's inline script environment, run:
+
+```sh
+uv run --no-sync python demo.py
+```
+
+No demo server starts automatically.

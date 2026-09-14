@@ -19,8 +19,7 @@ fi
 # uv is included in the Amp orb base image. Respect the repository's Python pin.
 echo 'Preparing Python and locked dependencies (including development tools and extras)'
 time uv python install "$(cat .python-version)"
-# Preserve the committed lockfile, including its older uv metadata format.
-time uv sync --frozen --all-extras
+time uv sync --locked --all-extras
 
 # Use Debian's ASDF systems, without downloading a separate Quicklisp distribution.
 echo 'Warming Common Lisp dependency compilation caches'
