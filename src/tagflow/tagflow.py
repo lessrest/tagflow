@@ -578,6 +578,17 @@ def clear():
 # -----------------------------------------------------------------------------
 
 
+def render(component: Callable[[], None]) -> str:
+    """
+    Run `component` inside a fresh document and return the HTML it built.
+    This is the explicit counterpart to the ambient `document()` context:
+    nothing leaks into or out of the surrounding document, if any.
+    """
+    with document() as doc:
+        component()
+    return doc.to_html()
+
+
 def document_html() -> str:
     """
     Returns the entire document as an HTML string, prefixed by the

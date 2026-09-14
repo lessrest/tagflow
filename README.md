@@ -52,8 +52,9 @@ def page(title: str):
           with tag.title():
               # append a text node to the title tag
               text(title)
-          with tag.script(src="https://cdn.tailwindcss.com"):
-              pass # no content in the script tag
+          # elements are appended when created, so an empty element
+          # needs no `with` block
+          tag.script(src="https://cdn.tailwindcss.com")
 
       # use "classes" to avoid conflict with the "class" keyword
       with tag.body(classes="bg-gray-50 p-4"):
@@ -106,8 +107,7 @@ def page(title: str):
         with tag.head():
             with tag.title():
                 text(title)
-            with tag.script(src="https://cdn.tailwindcss.com"):
-                pass
+            tag.script(src="https://cdn.tailwindcss.com")
 
         with tag.body("bg-gray-50 p-4"):
             yield
@@ -214,10 +214,70 @@ There are no viewer sessions, application JSON requests, or handwritten DOM upda
 
 Styles are composed as nested Tagflow class-token lists, including conditional
 utility groups; the `ClassValue` type for such lists is exported from `tagflow`.
-The example's `hx.py` and `responses.py` modules name the htmx reading contracts
-and the conditional-response boundary it relies on; they are candidates for
-future library helpers. This is an alternative to—not a replacement for—the
-WebSocket live-document API below.
+This is an alternative to—not a replacement for—the WebSocket live-document API
+below. Two small optional modules carry the parts of that design that are not
+about any particular dashboard.
+
+### `tagflow.htmx`: named reading contracts
+
+Each function sets htmx 4 attributes on the current element, exactly as
+`attr()` would. The point is not fewer lines; it is that each bundle names one
+contract and encodes lifecycle rules that are easy to get subtly wrong:
+
+```python
+from tagflow import tag, text
+from tagflow import htmx as hx
+
+# Same-page navigation: replace #workspace from the same full page the
+# server would send anyway, push the URL, update the title.
+with tag.a(href=url):
+    hx.navigate(url, region="#workspace", indicator="#loading")
+    text("Next page")
+
+# Preview: load a region into the same region; no history, no title change.
+with tag.a(href=f"/builds/{id}"):
+    hx.preview(f"/builds/{id}", region="#build-detail")
+
+# Self-refreshing embedded representation; morphs in place; stops when done.
+with tag.section(id="summary"):
+    hx.refresh("/summary", trigger="changed from:body, every 15s", done=finished)
+
+# Cursor reader: replace yourself with the next page's selection; retry on an
+# interval and on click; never cancel a slow response.
+with tag.a(href=next_url):
+    hx.read_cursor(next_url, select="#log-chunk > *", every="2s")
+
+# SSE source for named events. Place it outside any region a swap replaces.
+with tag.div(hx_swap="none"):
+    hx.connect("/events", close_on="complete")
+
+# Response headers that replace the reader which asked, resolved relative to
+# the requesting element so a late response cannot reacquire a newer panel.
+headers = hx.recover_reader(closest="#build-detail")
+```
+
+### `tagflow.responses`: an explicit render-and-respond boundary
+
+With the `starlette` extra, `render_response` renders a component in an
+isolated document, hashes the exact bytes into a strong ETag, and answers a
+matching `If-None-Match` on GET or HEAD with 304. Cache policy is required:
+
+```python
+from tagflow.responses import render_response
+
+async def summary(request):
+    return render_response(
+        request, lambda: views.summary(state), cache_control="public, no-cache"
+    )
+
+# Error or recovery representations: no validator, never stored.
+return render_response(
+    request, page, cache_control="no-store", conditional=False, headers=headers
+)
+```
+
+`render(component)` alone is also exported from `tagflow` for callers that
+only need the HTML string.
 
 ## Live Documents (early working prototype)
 

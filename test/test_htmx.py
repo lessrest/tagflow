@@ -1,13 +1,12 @@
-"""Contracts of the dashboard's cookbook modules, independent of the app."""
+"""Contracts of tagflow.htmx and tagflow.responses."""
 
 import pytest
 from bs4 import BeautifulSoup
 from starlette.requests import Request
 
 from tagflow import tag, text, document
-
-from examples.dashboard import hx
-from examples.dashboard.responses import matches, render_response
+from tagflow import htmx as hx
+from tagflow.responses import matches, render_response
 
 
 def request(method: str = "GET", **headers: str) -> Request:

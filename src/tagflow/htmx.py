@@ -9,11 +9,21 @@ cancelling a slow response; recovery must replace the reader that asked, not
 whichever current reader happens to carry the same ID.
 
 The generated attributes stay visible in the HTML and ``attr()`` remains the
-escape hatch. Nothing here stores state on the server or chooses a transport.
-This is a cookbook prototype for a possible ``tagflow.htmx`` module.
+escape hatch. Nothing here stores state on the server, chooses a transport,
+or knows about the server's routes. The vocabulary follows htmx 4; load
+``htmx.min.js`` (and ``hx-sse`` for :func:`connect`) yourself.
+
+Usage::
+
+    from tagflow import tag, text
+    from tagflow import htmx as hx
+
+    with tag.section(id="summary"):
+        hx.refresh("/summary", trigger="every 3s", done=finished)
+        ...
 """
 
-from tagflow import attr
+from .tagflow import attr
 
 
 def navigate(

@@ -1,13 +1,14 @@
-"""Render a Tagflow component into an HTTP representation.
+"""Render a Tagflow component into a Starlette HTTP representation.
 
 ``render_response`` is the explicit boundary between a component callable and
-a Starlette response: render once inside an isolated document scope, produce
-the exact bytes, and apply conditional-request semantics to those bytes. It
-does not depend on request middleware, ambient document state, or Tagflow's
-WebSocket sessions. Cache policy is a required argument on purpose: nothing
-here decides that a representation is public or private.
+a response: render once inside an isolated document scope, produce the exact
+bytes, and apply conditional-request semantics to those bytes. It does not
+depend on ``DocumentMiddleware``, ambient document state, or Tagflow's
+WebSocket sessions, so it suits handlers that render several independent
+representations. Cache policy is a required argument on purpose: nothing here
+decides that a representation is public or private.
 
-This is a cookbook prototype for a possible ``tagflow.starlette`` helper.
+Requires the ``starlette`` extra (``uv add "tagflow[starlette]"``).
 """
 
 import re
@@ -18,17 +19,10 @@ from collections.abc import Callable, Mapping
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
-from tagflow import document
+from .tagflow import render
 
 # RFC 9110 entity-tag: optional weakness indicator and a quoted opaque tag.
 ENTITY_TAG = re.compile(r'(W/)?"([^"]*)"')
-
-
-def render(component: Callable[[], None]) -> str:
-    """Render ``component`` in a fresh document and return its HTML."""
-    with document() as doc:
-        component()
-    return doc.to_html()
 
 
 def etag_for(body: bytes) -> str:

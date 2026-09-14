@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace
 from urllib.parse import urlencode
 
 from tagflow import tag, text, ClassValue
+from tagflow import htmx as hx
 
-from . import hx
 from .model import Build, Snapshot, STATES
 
 
@@ -128,23 +128,18 @@ def shell(title: str, content: Callable[[], None]) -> None:
         with tag.head():
             with tag.title():
                 text(f"{title} · Tagflow")
-            with tag.meta(charset="utf-8"):
-                pass
-            with tag.meta(
+            tag.meta(charset="utf-8")
+            tag.meta(
                 name="viewport",
                 content="width=device-width, initial-scale=1",
-            ):
-                pass
-            with tag.meta(
+            )
+            tag.meta(
                 name="htmx-config",
                 content='{"noSwap":[204,304,"4xx","5xx"]}',
-            ):
-                pass
-            with tag.link(rel="stylesheet", href="/static/dashboard.css"):
-                pass
+            )
+            tag.link(rel="stylesheet", href="/static/dashboard.css")
             for script in ("htmx-4.0.0.min.js", "hx-sse-4.0.0.min.js"):
-                with tag.script(src=f"/static/{script}", defer=True):
-                    pass
+                tag.script(src=f"/static/{script}", defer=True)
         with tag.body(
             [
                 "bg-slate-50",
@@ -511,26 +506,24 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                     action=BASE,
                 ):
                     navigation(BASE)
-                    with tag.input(
+                    tag.input(
                         type="hidden",
                         name="transport",
                         value=view.transport,
-                    ):
-                        pass
+                    )
                     with tag.label(
                         ["min-w-32", "flex-1", "max-sm:basis-full"]
                     ):
                         with tag.span("sr-only"):
                             text("Search packages")
-                        with tag.input(
+                        tag.input(
                             [FIELD, "w-full"],
                             type="search",
                             name="q",
                             value=view.q,
                             placeholder="Search packages…",
                             maxlength="80",
-                        ):
-                            pass
+                        )
                     with tag.label():
                         with tag.span("sr-only"):
                             text("Build state")

@@ -33,6 +33,37 @@ def test_basic_document():
     assert "<div><p>Hello World</p></div>" in result
 
 
+def test_empty_elements_need_no_with_block():
+    """An element is appended when created; `with ... : pass` is optional."""
+    with document() as doc:
+        with tag.head():
+            tag.meta(charset="utf-8")
+            tag.link(rel="stylesheet", href="/a.css")
+            with tag.title():
+                text("t")
+
+    assert doc.to_html() == (
+        '<head><meta charset="utf-8"><link rel="stylesheet" href="/a.css">'
+        "<title>t</title></head>"
+    )
+
+
+def test_render_isolates_a_component_from_the_ambient_document():
+    from tagflow import render
+
+    def inner() -> None:
+        with tag.p():
+            text("inner")
+
+    with document() as outer:
+        with tag.div():
+            text("outer")
+            assert render(inner) == "<p>inner</p>"
+            text(" continues")
+
+    assert outer.to_html() == "<div>outer continues</div>"
+
+
 def test_html_decorators():
     """Test the @html decorator functionality"""
 

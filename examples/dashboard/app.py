@@ -17,11 +17,12 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from tagflow import tag, text
+from tagflow import htmx as hx
+from tagflow.responses import render_response
 
-from . import hx, views
+from . import views
 from .model import Build, Campaign, Snapshot, STATES
 from .views import BASE, View
-from .responses import render_response
 
 
 def integer(value: str, minimum: int = 0, maximum: int = 10000) -> int:
