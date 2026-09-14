@@ -1,16 +1,24 @@
 """HTML representations. All application UI is constructed by Tagflow."""
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from urllib.parse import urlencode
+from dataclasses import replace
 
 from tagflow import tag, text, ClassValue
 from tagflow import htmx as hx
 
 from .model import Build, Snapshot, STATES
+from .resources import (
+    BASE,
+    BUILD,
+    BUILD_STATUS,
+    DASHBOARD,
+    EVENTS,
+    LOG,
+    SUMMARY,
+    UPDATES,
+    View,
+)
 
-
-BASE = "/campaigns/native"
 PAGE_SIZE = 8
 
 # Complete utility tokens let Tailwind discover every branch at build time.
@@ -70,36 +78,6 @@ NUMBERS = {
     "running": "text-blue-700",
     "failed": "text-red-700",
 }
-
-
-@dataclass(frozen=True)
-class View:
-    q: str = ""
-    state: str = ""
-    page: int = 1
-    transport: str = "sse"
-
-    def query(self) -> str:
-        return urlencode(
-            dict(
-                q=self.q,
-                state=self.state,
-                page=self.page,
-                transport=self.transport,
-            )
-        )
-
-    def url(self) -> str:
-        return f"{BASE}?{self.query()}"
-
-    @property
-    def trigger(self) -> str:
-        # The slow poll also recovers if an SSE connection is unavailable.
-        return (
-            "campaign-changed from:body, every 15s"
-            if self.transport == "sse"
-            else "every 3s"
-        )
 
 
 def label(value: str, kind: str = "") -> None:
@@ -188,7 +166,7 @@ def summary(snapshot: Snapshot, view: View) -> None:
         data_revision=snapshot.revision,
     ):
         hx.refresh(
-            f"{BASE}/summary?transport={view.transport}",
+            SUMMARY.url(view),
             trigger=view.trigger,
             done=snapshot.complete,
         )
@@ -258,7 +236,7 @@ def summary(snapshot: Snapshot, view: View) -> None:
 
 
 def updates(snapshot: Snapshot, view: View, seen: str) -> None:
-    url = f"{BASE}/updates?{view.query()}&{urlencode({'seen': seen})}"
+    url = UPDATES.url(view, seen=seen)
     with tag.div(
         ["text-xs", "whitespace-nowrap"],
         id="updates",
@@ -268,9 +246,9 @@ def updates(snapshot: Snapshot, view: View, seen: str) -> None:
         if seen != snapshot.revision:
             with tag.a(
                 [BUTTON, "update", "bg-blue-50", "text-blue-700"],
-                href=view.url(),
+                href=DASHBOARD.url(view),
             ):
-                navigation(view.url())
+                navigation(DASHBOARD.url(view))
                 text("Updates available →")
         else:
             with tag.span(MUTED):
@@ -280,7 +258,7 @@ def updates(snapshot: Snapshot, view: View, seen: str) -> None:
 def build_status(build: Build, view: View) -> None:
     with tag.div(id="build-status"):
         hx.refresh(
-            f"/builds/{build.id}/status?transport={view.transport}",
+            BUILD_STATUS.url(view, build_id=build.id),
             trigger=view.trigger,
             done=build.state not in ("queued", "running"),
         )
@@ -312,7 +290,13 @@ def log_window(
     if end < len(build.lines) or (
         follow and build.state in ("queued", "running")
     ):
-        url = f"/builds/{build.id}/log?{urlencode(dict(epoch=epoch, after=end, follow=int(follow), transport=view.transport))}"
+        url = LOG.url(
+            view,
+            build_id=build.id,
+            epoch=epoch,
+            after=end,
+            follow=int(follow),
+        )
         with tag.a(
             [LINK, "log-tail", "mt-2", "block", "text-[10px]"],
             href=url,
@@ -347,7 +331,9 @@ def detail(
         with tag.div([PANEL_TITLE, "mb-2"]):
             with tag.h2(["text-base", "font-semibold"]):
                 text(build.name)
-            with tag.a([LINK, "text-xs"], href=f"/builds/{build.id}"):
+            with tag.a(
+                [LINK, "text-xs"], href=BUILD.url(build_id=build.id)
+            ):
                 text("Permalink ↗")
         build_status(build, view)
         with tag.dl(
@@ -373,7 +359,7 @@ def detail(
         with tag.div([PANEL_TITLE, "mb-2"]):
             with tag.h3(["text-sm", "font-semibold"]):
                 text("Build output")
-            url = f"/builds/{build.id}?follow={int(not follow)}&transport={view.transport}"
+            url = BUILD.url(view, build_id=build.id, follow=int(not follow))
             with tag.a([LINK, "text-[10px]"], href=url):
                 hx.preview(url, region="#build-detail")
                 text("Pause following" if follow else "Resume following")
@@ -402,14 +388,14 @@ def detail(
 def connection(snapshot: Snapshot, view: View) -> None:
     if view.transport == "sse" and not snapshot.complete:
         with tag.div(id="changes", hx_swap="none"):
-            hx.connect(f"{BASE}/events", close_on="campaign-complete")
+            hx.connect(EVENTS.url(), close_on="campaign-complete")
 
 
 def log_page(
     build: Build, snapshot: Snapshot, after: int, follow: bool, view: View
 ) -> None:
     with tag.main([FRAME, "py-3"], id="workspace"):
-        with tag.a(LINK, href=f"/builds/{build.id}?{view.query()}"):
+        with tag.a(LINK, href=BUILD.url(view, build_id=build.id)):
             text(f"← {build.name}")
         with tag.section([PANEL, "mt-2", "p-3"], id="build-detail"):
             with tag.h1([HEADING, "mb-2"]):
@@ -458,7 +444,7 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         ("sse", "SSE + GET"),
                         ("poll", "Polling"),
                     ):
-                        url = replace(view, transport=mode).url()
+                        url = DASHBOARD.url(replace(view, transport=mode))
                         with tag.a(
                             [
                                 FOCUS,
@@ -601,7 +587,9 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                                     ):
                                         text(f"{build.id:03}")
                                     with tag.td():
-                                        url = f"/builds/{build.id}?transport={view.transport}"
+                                        url = BUILD.url(
+                                            view, build_id=build.id
+                                        )
                                         with tag.a(
                                             [
                                                 LINK,
@@ -651,7 +639,9 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                             ),
                         ):
                             if enabled:
-                                url = replace(view, page=page).url()
+                                url = DASHBOARD.url(
+                                    replace(view, page=page)
+                                )
                                 with tag.a(LINK, href=url):
                                     navigation(url)
                                     text(title)

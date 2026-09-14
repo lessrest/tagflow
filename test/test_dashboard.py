@@ -8,7 +8,14 @@ from bs4 import BeautifulSoup
 
 from examples.dashboard.app import create_app, notifications
 from examples.dashboard.model import Campaign
-from examples.dashboard.views import BASE
+from examples.dashboard.resources import (
+    BASE,
+    BUILD,
+    DASHBOARD,
+    LOG,
+    SUMMARY,
+    View,
+)
 
 
 @pytest.fixture
@@ -263,3 +270,59 @@ async def test_lifespan_shutdown_is_bounded():
     with anyio.fail_after(1):
         async with app.router.lifespan_context(app):
             await anyio.sleep(0)
+
+
+def test_resource_urls_carry_declared_view_fields():
+    view = View(q="lib", page=2, transport="poll")
+    assert DASHBOARD.url(view) == (
+        f"{BASE}?q=lib&state=&page=2&transport=poll"
+    )
+    assert SUMMARY.url(view) == f"{BASE}/summary?transport=poll"
+    assert BUILD.url(build_id=7) == "/builds/7"
+    assert LOG.url(view, build_id=7, after=5) == (
+        "/builds/7/log?transport=poll&after=5"
+    )
+    # An explicit parameter overrides the carried field.
+    assert BUILD.url(view, build_id=7, transport="sse") == (
+        "/builds/7?transport=sse"
+    )
+    with pytest.raises(KeyError):
+        BUILD.url(view)
+
+
+@pytest.mark.anyio
+async def test_every_emitted_url_is_served_with_its_transport(client):
+    """Every URL an element emits must reach a route, and every embedded
+    reader must keep the page's transport: a cursor link that dropped
+    ``transport`` once silently turned a polling reader into an SSE one.
+    Plain links may be canonical (the permalink deliberately carries none).
+    """
+    seen: set[str] = set()
+    queue = [f"{BASE}?transport=poll", "/builds/6/log?transport=poll"]
+    while queue:
+        url = queue.pop()
+        if url in seen:
+            continue
+        seen.add(url)
+        response = await client.get(url)
+        assert response.status_code == 200, url
+        soup = BeautifulSoup(response.text, "html.parser")
+        for element in soup.find_all(True):
+            reader = element.get("hx-get")
+            if (
+                isinstance(reader, str)
+                and "transport=poll" in url
+                and "transport=sse" not in reader  # the transport switch
+                and element.name != "form"  # carries it as a hidden input
+            ):
+                assert "transport=poll" in reader, (url, reader)
+            for name in ("href", "hx-get", "action"):
+                target = element.get(name)
+                if not isinstance(target, str) or not target.startswith(
+                    "/"
+                ):
+                    continue
+                if target.startswith("/static/"):
+                    continue
+                queue.append(target)
+    assert len(seen) > 20

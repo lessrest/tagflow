@@ -57,8 +57,13 @@ pinned in `test/test_htmx.py`; this example's browser suite is their end-to-end
 coverage for failed, slow, and reordered responses. See the main README for
 usage.
 
-The application keeps everything the library cannot know: `View` and its URL
-schema (which query parameters propagate through cursor links), `View.trigger`
+The application keeps everything the library cannot know. `resources.py` is
+the URL schema: each `Resource` declares its path template and which `View`
+fields its URLs carry, once, and both `views.py` (every `href`/`hx-get`) and
+`app.py` (every `Route`) derive from it, so a cursor link can no longer drop
+`transport` while the route that serves it still expects it.
+`test_every_emitted_url_is_served_with_its_transport` crawls the rendered
+pages and fails if that ever regresses. Also application-owned: `View.trigger`
 (which event and recovery interval a transport uses), `representation()` in
 `app.py` (the decision that this data is public and revalidated), the placement
 of the SSE `connection()` outside replaceable regions, and which link is a

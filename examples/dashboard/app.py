@@ -22,7 +22,17 @@ from tagflow.responses import render_response
 
 from . import views
 from .model import Build, Campaign, Snapshot, STATES
-from .views import BASE, View
+from .resources import (
+    BASE,
+    BUILD,
+    BUILD_STATUS,
+    DASHBOARD,
+    EVENTS,
+    LOG,
+    SUMMARY,
+    UPDATES,
+    View,
+)
 
 
 def integer(value: str, minimum: int = 0, maximum: int = 10000) -> int:
@@ -214,13 +224,13 @@ def create_app(
         lifespan=lifespan,
         routes=[
             Route("/", home),
-            Route(BASE, dashboard),
-            Route(f"{BASE}/summary", summary),
-            Route(f"{BASE}/updates", updates),
-            Route(f"{BASE}/events", events, methods=["GET"]),
-            Route("/builds/{build_id:int}", build_page),
-            Route("/builds/{build_id:int}/status", build_status),
-            Route("/builds/{build_id:int}/log", log),
+            DASHBOARD.route(dashboard),
+            SUMMARY.route(summary),
+            UPDATES.route(updates),
+            EVENTS.route(events),
+            BUILD.route(build_page),
+            BUILD_STATUS.route(build_status),
+            LOG.route(log),
             Mount(
                 "/static",
                 StaticFiles(directory=Path(__file__).parent / "static"),
