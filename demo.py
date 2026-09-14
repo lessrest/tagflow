@@ -25,9 +25,6 @@ from tagflow import (
     tag,
     attr,
     text,
-    clear,
-    spawn,
-    transition,
 )
 
 logger = logging.getLogger("tagflow.demo")
@@ -164,49 +161,36 @@ async def posts():
                 render_post(post)
 
 
+def counter(value: int) -> None:
+    """A region: one element that owns its id. The page renders it once
+    and the session re-renders it in place whenever the value changes."""
+    with tag.div(id="counter", classes="text-6xl font-mono"):
+        text(str(value))
+
+
 @app.get("/counter")
-async def counter():
+async def counter_page():
     session = await live.session()
     logger.info("live session started %s", session.id)
-    with layout("Live Counter"):
-        # Insert the web component that connects to the live session.
-        # This will automatically connect to the session and update the DOM
-        # when the session receives updates.
-        session.client_tag()
 
+    async def count():
+        for i in range(1, 1_000_000):
+            await anyio.sleep(1)
+            session.update(lambda: counter(i))
+
+    with layout("Live Counter"):
+        # The client connects to the session and morphs regions it pushes.
+        # It sits outside every region, so no morph can remove it.
+        session.client_tag()
         with tag.div(classes="text-center"):
             with tag.h1(classes="text-4xl font-bold mb-8"):
                 text("Live Counter Demo")
-
             with tag.div(
                 classes="bg-white rounded-lg shadow p-8 inline-block"
             ):
-                with tag.div(classes="text-6xl font-mono"):
-                    # We define a background task that changes the counter value
-                    # every second.
-                    async def update_counter():
-                        logger.info("counter task started %s", session.id)
-                        i = 0
-                        try:
-                            while True:
-                                # Apply a document transaction to the counter element.
-                                # The mutations are collected and sent as a single
-                                # atomic update to the client.
-                                async with transition():
-                                    clear()
-                                    text(str(i))
+                counter(0)
 
-                                await anyio.sleep(1)
-                                i += 1
-                        finally:
-                            # If the task is cancelled, we stop the counter.
-                            logger.info(
-                                "counter task cancelled %s", session.id
-                            )
-
-                    # Start the task as a child of the live session.
-                    await spawn(update_counter)
-
+    session.spawn(count)
     logger.info("rendered counter page for %s", session.id)
 
 

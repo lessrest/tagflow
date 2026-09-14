@@ -214,9 +214,12 @@ There are no viewer sessions, application JSON requests, or handwritten DOM upda
 
 Styles are composed as nested Tagflow class-token lists, including conditional
 utility groups; the `ClassValue` type for such lists is exported from `tagflow`.
-This is an alternative to—not a replacement for—the WebSocket live-document API
-below. Two small optional modules carry the parts of that design that are not
-about any particular dashboard.
+The unit of change on that page is a *region*: one element with an `id`,
+rendered by one component, morphed in place when new HTML arrives. The
+[live sessions](#live-regions-over-a-websocket) below push the same unit over a
+WebSocket, so a component written once can refresh itself over HTTP on one page
+and be pushed by the server on another. Two small optional modules carry the
+parts of the htmx design that are not about any particular dashboard.
 
 ### `tagflow.htmx`: named reading contracts
 
@@ -279,62 +282,69 @@ return render_response(
 `render(component)` alone is also exported from `tagflow` for callers that
 only need the HTML string.
 
-## Live Documents (early working prototype)
+## Live regions over a WebSocket
 
-Tagflow also offers "live documents" that asynchronous server tasks can update
-in real time after the initial page load. It works a bit like Phoenix LiveView:
-the browser runs a script that exposes a DOM mutation capability via WebSocket,
-letting the server send updates to elements in the document.
-
-Let's look at a simple example of a live document that updates a counter.
+A `Live` session pushes regions to a page after it has loaded. A region is a
+component that renders exactly one element carrying an `id`; `render_region`
+enforces that rule and is what `Session.update()` uses. The browser finds the
+element by id and morphs it in place with [Idiomorph](https://github.com/bigskysoftware/idiomorph)
+(vendored, the algorithm htmx uses), so focus, scroll position, and unchanged
+nodes survive.
 
 ```python
-from tagflow import tag, text, document, clear, spawn, transition
-from tagflow import TagResponse, DocumentMiddleware, Live
-
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
 import anyio
+from starlette.applications import Starlette
+from starlette.routing import Route
+from tagflow import tag, text, Live
+from tagflow.responses import render_response
 
 live = Live()
 
-app = FastAPI(lifespan=live.run)
-app.add_middleware(DocumentMiddleware)
+def counter(value: int) -> None:
+    with tag.output(id="counter"):
+        text(str(value))
 
-@app.get("/counter", response_class=TagResponse)
-async def counter():
+async def page(request):
     session = await live.session()
 
-    with tag.html():
-        with tag.body():
-            live.script_tag()
-            session.client_tag()
+    async def count():
+        for i in range(1, 10**6):
+            await anyio.sleep(1)
+            session.update(lambda: counter(i))   # one message, morphed in place
 
-            with tag.h1():
-                async def loop():
-                    i = 0
-                    while True:
-                        # A transition is like a transaction.
-                        # After the block exits, the change is sent via WebSocket.
-                        # The browser script applies it using a DOM View Transition.
-                        with transition():
-                            # This applies to the H1 element which is the current node.
-                            clear()
-                            text(str(i))
-                        await anyio.sleep(1)
-                        i += 1
+    def content():
+        with tag.html():
+            with tag.head():
+                live.script_tag()
+            with tag.body():
+                session.client_tag()   # outside every region
+                counter(0)
 
-                # We can spawn a task in the session's task scope.
-                # All session tasks are cancelled when the session is closed.
-                spawn(loop)
+    session.spawn(count)
+    return render_response(request, content, doctype=True, cache_control="no-store")
+
+app = Starlette(lifespan=live.run, routes=[Route("/", page)])
 ```
 
-This feature uses AnyIO for structured concurrency and can work with either
-`asyncio` or `trio` as the backend.
+What the server keeps is the latest HTML of each region, not a copy of the
+browser's DOM. That makes the connection lifecycle simple to state:
 
-It remains to be seen whether the "session" concept makes sense, and how to
-think about session lifecycles, reconnects, etc.
+- A connection first receives every region it has not seen at its current
+  HTML, then one update per change. `update(a, b)` arrives as one message and
+  the browser applies it atomically (in a view transition where supported).
+- Re-rendering identical HTML sends nothing. Changes made while no browser is
+  attached are coalesced, not queued.
+- The client reconnects with backoff. If the server no longer knows the session
+  (it ended, or the process restarted) it closes with code 4001 and the client
+  reloads the page; listen for the cancelable `tagflow:expired` event to do
+  something else.
+- A session ends when `cancel()` is called, when `Live.run()` shuts down, or
+  once no browser has been attached for `Live(grace=…)` seconds (default 30).
+  Its `spawn()`ed tasks end with it.
+
+Works with either AnyIO backend. `Live.run(app)` mounts the client under
+`/.well-known/tagflow/static/` and the socket at `/.well-known/tagflow/live.ws`
+on any Starlette application, FastAPI included.
 
 ## License
 

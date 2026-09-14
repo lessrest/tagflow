@@ -1,6 +1,6 @@
 """
-A module for building HTML/XML documents using context managers, with
-improved organization and a sum-type approach for mutation events.
+Block-oriented HTML/XML generation with context managers, plus live regions
+that a server can re-render and push to the browser over a WebSocket.
 """
 
 import random
@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import re
 
 from io import StringIO
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -25,17 +25,16 @@ from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
 
 import anyio
+import anyio.abc
 from anyio.abc import TaskGroup
-from anyio.streams.memory import (
-    MemoryObjectSendStream,
-    MemoryObjectReceiveStream,
-)
 
 # Import Starlette (base framework used by FastAPI)
 try:
     from starlette.responses import Response, HTMLResponse
     from starlette.requests import Request
     from starlette.websockets import WebSocket, WebSocketDisconnect
+    from starlette.staticfiles import StaticFiles
+    from starlette.applications import Starlette
     from starlette.middleware.base import (
         BaseHTTPMiddleware,
         RequestResponseEndpoint,
@@ -75,20 +74,8 @@ except ImportError:
         RequestResponseEndpoint = object
         WebSocket = object
         WebSocketDisconnect = Exception
-
-# Import FastAPI-specific stuff (optional, only for FastAPI integrations)
-try:
-    from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
-
-    HAS_FASTAPI = True
-except ImportError:
-    HAS_FASTAPI = False
-    if TYPE_CHECKING:
-        raise
-    else:
-        FastAPI = object
         StaticFiles = object
+        Starlette = object
 
 logger = logging.getLogger(__name__)
 
@@ -108,62 +95,7 @@ def mint() -> str:
 
 
 # -----------------------------------------------------------------------------
-# 1. Mutation Event Sum-Type
-# -----------------------------------------------------------------------------
-
-
-@dataclass
-class OpenTagEvent:
-    target: str  # parent element ID
-    id: str  # new element ID
-    tag: str  # HTML tag name
-    attrs: dict[str, str]  # initial attributes
-    type: Literal["openTag"] = "openTag"
-
-
-@dataclass
-class CloseTagEvent:
-    target: str  # element ID to close
-    type: Literal["closeTag"] = "closeTag"
-
-
-@dataclass
-class SetAttributeEvent:
-    target: str  # element ID
-    name: str  # attribute name
-    value: str  # attribute value
-    type: Literal["setAttribute"] = "setAttribute"
-
-
-@dataclass
-class SetTextEvent:
-    target: str  # element ID
-    value: str  # new text
-    type: Literal["setText"] = "setText"
-
-
-@dataclass
-class ClearEvent:
-    target: str  # element ID
-    type: Literal["clear"] = "clear"
-
-
-# A discriminated union of the possible events
-MutationEvent = Union[
-    OpenTagEvent, CloseTagEvent, SetAttributeEvent, SetTextEvent, ClearEvent
-]
-
-
-@dataclass
-class Transaction:
-    """Holds a list of mutations which can be sent in a single atomic update."""
-
-    mutations: list[MutationEvent]
-    type: Literal["update"] = "update"
-
-
-# -----------------------------------------------------------------------------
-# 2. Fragment: The root of a Tagflow context
+# 1. Fragment: The root of a Tagflow context
 # -----------------------------------------------------------------------------
 
 
@@ -173,19 +105,11 @@ class Fragment:
     as a complete document or XML fragment.
     """
 
-    live_session: Optional["Session"]
-
     def __init__(self):
         self.element = ET.Element("fragment")
-        self.live_session = None
 
     def __str__(self) -> str:
         return self.to_html()
-
-    @property
-    def live(self) -> bool:
-        """Whether this fragment is connected to a live session."""
-        return self.live_session is not None
 
     def to_html(self, compact: bool = True) -> str:
         """
@@ -232,7 +156,7 @@ class Fragment:
 
 
 # -----------------------------------------------------------------------------
-# 3. Context Variables and Transaction Recording
+# 2. Context Variables
 # -----------------------------------------------------------------------------
 
 # The current node in the document to which we are appending content
@@ -240,9 +164,6 @@ node: ContextVar[ET.Element] = ContextVar("node")
 
 # The current document fragment (root)
 root_fragment: ContextVar[Fragment] = ContextVar("root")
-
-# The current transaction, if any
-tx: ContextVar[Optional[Transaction]] = ContextVar("tx", default=None)
 
 
 @contextmanager
@@ -257,34 +178,8 @@ def enter(element: ET.Element):
         node.reset(token)
 
 
-def _get_or_create_id(element: ET.Element) -> str:
-    """
-    Get or create a unique 'id' attribute for an element. If the root
-    document is in 'live' mode, we must ensure elements have IDs so
-    they can be tracked for incremental updates.
-    """
-    current_id = element.attrib.get("id")
-
-    if not current_id and root_fragment.get().live:
-        new_id = mint()
-        element.attrib["id"] = new_id
-        return new_id
-    return current_id or ""
-
-
-def record_mutation(event: MutationEvent):
-    """
-    Records a mutation if there's an active transaction. The transaction
-    is then responsible for bundling these changes and sending them to
-    the client via WebSocket (if in live mode).
-    """
-    transaction = tx.get()
-    if transaction is not None:
-        transaction.mutations.append(event)
-
-
 # -----------------------------------------------------------------------------
-# 4. Public API Context Managers
+# 3. Public API Context Managers
 # -----------------------------------------------------------------------------
 
 
@@ -305,7 +200,7 @@ def document():
 
 
 # -----------------------------------------------------------------------------
-# 5. Core Tag Building
+# 4. Core Tag Building
 # -----------------------------------------------------------------------------
 
 
@@ -390,40 +285,9 @@ class HTMLTagBuilder:
                 class_values.append(class_attr)
             attrs["class"] = strs(class_values)
 
-        # Create the element
         element = ET.Element(tagname, attrib=attrs)
-
-        # If the document is live, ensure we have an ID
-        if root_fragment.get().live and "id" not in attrs:
-            _get_or_create_id(element)
-
-        # Append to parent
-        parent = node.get()
-        parent.append(element)
-
-        # Record the open tag mutation
-        record_mutation(
-            OpenTagEvent(
-                target=_get_or_create_id(parent),
-                id=_get_or_create_id(element),
-                tag=tagname,
-                attrs=attrs,
-            )
-        )
-
-        @contextmanager
-        def context():
-            token = node.set(element)
-            try:
-                yield element
-            finally:
-                node.reset(token)
-                # Record the close tag mutation when the context exits
-                record_mutation(
-                    CloseTagEvent(target=_get_or_create_id(element))
-                )
-
-        return context()
+        node.get().append(element)
+        return enter(element)
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         """
@@ -467,7 +331,7 @@ html = HTMLDecorators()
 
 
 # -----------------------------------------------------------------------------
-# 6. Convenience Functions
+# 5. Convenience Functions
 # -----------------------------------------------------------------------------
 
 
@@ -479,27 +343,9 @@ def text(content: str):
     current_el = node.get()
     if len(current_el) > 0:
         last_child = current_el[-1]
-        old_tail = last_child.tail or ""
-        new_tail = old_tail + content
-        last_child.tail = new_tail
-
-        record_mutation(
-            SetTextEvent(
-                target=_get_or_create_id(last_child),
-                value=new_tail,
-            )
-        )
+        last_child.tail = (last_child.tail or "") + content
     else:
-        old_text = current_el.text or ""
-        new_text = old_text + content
-        current_el.text = new_text
-
-        record_mutation(
-            SetTextEvent(
-                target=_get_or_create_id(current_el),
-                value=new_text,
-            )
-        )
+        current_el.text = (current_el.text or "") + content
 
 
 def attr(name: str, value: AttrValue):
@@ -519,17 +365,6 @@ def attr(name: str, value: AttrValue):
     else:
         current_el.set(xml_name, attr_value_to_str(value, name))
 
-    # Record the mutation
-    current_val = current_el.get(xml_name)
-    if current_val is not None:
-        record_mutation(
-            SetAttributeEvent(
-                target=_get_or_create_id(current_el),
-                name=xml_name,
-                value=current_val,
-            )
-        )
-
 
 def classes(*names: ClassValue):
     """
@@ -540,16 +375,7 @@ def classes(*names: ClassValue):
     current_classes = el.get("class", "").strip()
     if current_classes and names:
         current_classes += " "
-    new_value = current_classes + strs(list(names))
-    el.set("class", new_value)
-
-    record_mutation(
-        SetAttributeEvent(
-            target=_get_or_create_id(el),
-            name="class",
-            value=new_value,
-        )
-    )
+    el.set("class", current_classes + strs(list(names)))
 
 
 def dataset(data: dict[str, str]):
@@ -563,18 +389,16 @@ def dataset(data: dict[str, str]):
 
 def clear():
     """
-    Removes all children of the current element. This also records a
-    clear mutation for live updates.
+    Removes all children and text of the current element. The tail belongs
+    to the parent, not to this element's contents, so it is left alone.
     """
     current_el = node.get()
     del current_el[:]
     current_el.text = None
-    # The tail belongs to the parent, not this element's contents.
-    record_mutation(ClearEvent(target=_get_or_create_id(current_el)))
 
 
 # -----------------------------------------------------------------------------
-# 7. Rendering Helper
+# 6. Rendering Helpers
 # -----------------------------------------------------------------------------
 
 
@@ -589,6 +413,40 @@ def render(component: Callable[[], None]) -> str:
     return doc.to_html()
 
 
+@dataclass(frozen=True)
+class Region:
+    """
+    The rendered form of a region: one element that owns its identity.
+    `html` is the element's outer HTML and `id` is its `id` attribute.
+    """
+
+    id: str
+    html: str
+
+
+def render_region(component: Callable[[], None]) -> Region:
+    """
+    Render `component` as a region: it must produce exactly one root element
+    carrying an `id`, because that id is how the browser finds the element
+    to morph, whether the new HTML arrives by an htmx request the element
+    made for itself or by a push from a live `Session`.
+    """
+    with document() as doc:
+        component()
+    roots = list(doc.element)
+    if len(roots) != 1:
+        raise ValueError(
+            f"A region must render exactly one root element, "
+            f"got {len(roots)}"
+        )
+    region_id = roots[0].get("id")
+    if not region_id:
+        raise ValueError(
+            f"A region's root <{roots[0].tag}> must have an id attribute"
+        )
+    return Region(region_id, doc.to_html())
+
+
 def document_html() -> str:
     """
     Returns the entire document as an HTML string, prefixed by the
@@ -601,7 +459,7 @@ def document_html() -> str:
 
 
 # -----------------------------------------------------------------------------
-# 8. FastAPI Response Classes
+# 7. Response Classes
 # -----------------------------------------------------------------------------
 
 
@@ -637,7 +495,7 @@ class XMLResponse(Response):
 
 
 # -----------------------------------------------------------------------------
-# 9. Document Middleware
+# 8. Document Middleware
 # -----------------------------------------------------------------------------
 
 
@@ -659,274 +517,224 @@ class DocumentMiddleware(BaseHTTPMiddleware):
 
 
 # -----------------------------------------------------------------------------
-# 10. Live Document Support
+# 9. Live Regions
 # -----------------------------------------------------------------------------
+#
+# A live page holds regions the server re-renders and pushes over a
+# WebSocket. The unit of change is the same one the htmx integration uses: a
+# whole element with an id, morphed in place. The server keeps only the
+# latest HTML of each region, so a connection that arrives late or
+# reconnects converges by receiving whatever it has not seen. Nothing on the
+# server mirrors the browser's DOM.
+
+
+@dataclass
+class Morph:
+    target: str  # id of the element to morph
+    html: str  # its new outer HTML
+    type: Literal["morph"] = "morph"
+
+
+@dataclass
+class Update:
+    """One message: morphs the browser applies together."""
+
+    morphs: list[Morph]
+    type: Literal["update"] = "update"
+
+
+# WebSocket close code telling the client its session is gone for good.
+SESSION_EXPIRED = 4001
 
 
 @dataclass
 class Session:
     """
-    A live session that manages WebSocket connections and updates.
-    Each session is intended to coordinate a single "live" view.
+    The live regions of one rendered page. Create it with `Live.session()`,
+    place `client_tag()` in the page outside any region, then call
+    `update()` from any task whenever a region's state changes.
     """
 
     id: str
     taskgroup: TaskGroup
-    send_channel: MemoryObjectSendStream[Transaction]
-    transaction_receiver: MemoryObjectReceiveStream[Transaction]
+    grace: float
+    regions: dict[str, str] = field(default_factory=dict)
+    connections: int = 0
+    changed: anyio.Event = field(default_factory=anyio.Event)
+    closed: anyio.Event = field(default_factory=anyio.Event)
+    _unattached_since: float = field(default_factory=anyio.current_time)
 
-    @asynccontextmanager
-    async def transition(self):
+    def update(self, *components: Callable[[], None]) -> None:
         """
-        Context manager for atomic document updates. Mutations in this
-        context are collected into a Transaction and sent when the
-        block exits. If no mutations are recorded, the transaction is not
-        sent.
+        Re-render each component as a region and push the results. All the
+        regions of one call reach the browser in one message and are applied
+        together. Rendering happens first, so a component that raises pushes
+        nothing.
         """
-        transaction = Transaction(mutations=[])
-        token = tx.set(transaction)
-        try:
-            yield
-            if transaction.mutations:
-                await self.send_channel.send(transaction)
-        finally:
-            tx.reset(token)
+        rendered = [render_region(component) for component in components]
+        for region in rendered:
+            self.regions[region.id] = region.html
+        changed, self.changed = self.changed, anyio.Event()
+        changed.set()
 
     def spawn(self, fn: Callable[..., Any]) -> None:
-        """
-        Spawn a new task in the session's task group. This is helpful
-        if your UI needs to do background polling, timers, etc.
-        """
+        """Start a task that ends with the session."""
         self.taskgroup.start_soon(fn)
 
-    def cancel(self):
-        """
-        Cancel the session. This will close the WebSocket connection and
-        stop the task group.
-        """
+    def cancel(self) -> None:
+        """End the session: its tasks stop and its browsers are told."""
         self.taskgroup.cancel_scope.cancel()
 
-    def client_tag(self):
+    def client_tag(self) -> None:
         """
-        Insert a live document client element with this session's ID.
-        This element will automatically connect to the server and apply
-        mutations to the DOM as they are received.
+        Insert the element that connects this page to the session. Place it
+        outside every region: a morph replaces a region's contents, and the
+        connection must outlive them.
         """
-        with tag("tagflow-client", session_id=self.id):
-            pass
+        tag("tagflow-client", session_id=self.id)
 
-    async def run(self):
+    def attach(self) -> None:
+        self.connections += 1
+
+    def detach(self) -> None:
+        self.connections -= 1
+        if self.connections == 0:
+            self._unattached_since = anyio.current_time()
+
+    async def run(self) -> None:
         """
-        Main loop for the session.
+        Keep the session while a browser is attached. Once none has been for
+        at least `grace` seconds (checked every `grace`), end it.
         """
-        async with self.send_channel:
-            while True:
-                await anyio.sleep(1)
-
-
-class FutureValue:
-    """
-    A small wrapper around a memory channel used to produce/consume a single
-    value exactly once. This can be used to return a Session from a background
-    task.
-    """
-
-    def __init__(self):
-        self.send_channel, self.receive_channel = (
-            anyio.create_memory_object_stream(1)
-        )
-
-    async def provide(self, value: Any):
-        await self.send_channel.send(value)
-        await self.send_channel.aclose()
-
-    async def consume(self) -> Any:
-        return await self.receive_channel.receive()
-
-
-@asynccontextmanager
-async def future():
-    """
-    Produces a context manager that yields a FutureValue. The context manager
-    handles the lifetime of the channels.
-    """
-    f = FutureValue()
-    try:
-        yield f
-    finally:
-        # Ensure channels get closed
-        await f.send_channel.aclose()
-        await f.receive_channel.aclose()
+        while True:
+            await anyio.sleep(self.grace)
+            idle = anyio.current_time() - self._unattached_since
+            if self.connections == 0 and idle >= self.grace:
+                self.cancel()
 
 
 class Live:
     """
-    Manages live document sessions and their WebSocket connections.
-    To use:
-       live = Live()
-       async with live.run(app):
-           # The server is now set up to handle WS at `/.well-known/tagflow/live.ws`
+    Serves the WebSocket and client script for live regions.
+
+        live = Live()
+        app = Starlette(lifespan=live.run)
+
+    The client script is mounted under `/.well-known/tagflow/static/` and
+    the WebSocket at `/.well-known/tagflow/live.ws`.
     """
 
-    def __init__(self):
+    STATIC = "/.well-known/tagflow/static"
+    SOCKET = "/.well-known/tagflow/live.ws"
+
+    def __init__(self, *, grace: float = 30.0):
+        self.grace = grace
         self._taskgroup: Optional[TaskGroup] = None
         self._sessions: dict[str, Session] = {}
 
     @asynccontextmanager
-    async def run(self, app: FastAPI):
-        """
-        Start the live document manager, hooking the default
-        WebSocket route to handle live updates.
-        """
+    async def run(self, app: Starlette):
+        """Lifespan: mount the routes and own every session's tasks."""
         async with anyio.create_task_group() as taskgroup:
             self._taskgroup = taskgroup
-
-            # Mount static files directory
-            static_dir = pathlib.Path(__file__).parent / "static"
             app.mount(
-                "/.well-known/tagflow/static",
-                StaticFiles(directory=str(static_dir)),
+                self.STATIC,
+                StaticFiles(
+                    directory=str(pathlib.Path(__file__).parent / "static")
+                ),
                 name="tagflow_static",
             )
-
-            # Register the default live WS endpoint
-            app.websocket("/.well-known/tagflow/live.ws")(
-                self.handle_websocket
+            app.router.add_websocket_route(
+                self.SOCKET, self.handle_websocket
             )
             try:
                 yield
             finally:
-                # Task groups wait for children on normal exit; sessions run
-                # indefinitely, so shutdown must explicitly cancel them.
+                # Sessions run until cancelled; shutdown must cancel them.
                 self._taskgroup = None
                 taskgroup.cancel_scope.cancel()
 
     async def session(self) -> Session:
-        """
-        Creates a new live session. The session's background task is managed
-        by the Live manager's task group. The calling code can then yield within
-        a Tagflow context to produce dynamic content.
-        """
+        """Create a session whose tasks live in the `Live` task group."""
         if not self._taskgroup:
             raise RuntimeError(
                 "Live.run() must be called before creating a session."
             )
+        return await self._taskgroup.start(self._run_session, mint())
 
-        # Get the current root fragment
-        doc = root_fragment.get()
-
-        # Create a session ID, memory channels, and a future
-        session_id = mint()
-        send_channel, receive_channel = anyio.create_memory_object_stream(8)
-
-        async with future() as session_future:
-
-            async def session_task():
-                async with anyio.create_task_group() as session_taskgroup:
-                    sess = Session(
-                        id=session_id,
-                        taskgroup=session_taskgroup,
-                        send_channel=send_channel,
-                        transaction_receiver=receive_channel,
-                    )
-                    self._sessions[session_id] = sess
-                    await session_future.provide(sess)
-                    try:
-                        logger.info("Session %s running", session_id)
-                        await sess.run()
-                    finally:
-                        logger.info("Session %s disconnected", session_id)
-                        del self._sessions[session_id]
-
-            # Start the session task in the manager's task group
-            self._taskgroup.start_soon(session_task)
-
-            # The consumer side: wait to get the Session from the future
-            sess = await session_future.consume()
-
-            # Set the live session on the document
-            doc.live_session = sess
-
-            return sess
+    async def _run_session(
+        self,
+        session_id: str,
+        *,
+        task_status: "anyio.abc.TaskStatus[Session]",
+    ) -> None:
+        async with anyio.create_task_group() as taskgroup:
+            session = Session(session_id, taskgroup, self.grace)
+            self._sessions[session_id] = session
+            try:
+                logger.info("Session %s running", session_id)
+                task_status.started(session)
+                await session.run()
+            finally:
+                logger.info("Session %s ended", session_id)
+                del self._sessions[session_id]
+                session.closed.set()
 
     def script_tag(self) -> None:
-        """
-        Insert the live document JavaScript code and custom element into the current element.
-        """
-        with tag.script(src="/.well-known/tagflow/static/tagflow.js"):
-            pass
+        """Insert the client scripts: the morph algorithm and the client."""
+        for name in ("idiomorph.min.js", "tagflow.js"):
+            tag.script(src=f"{self.STATIC}/{name}", defer=True)
 
-    def client_tag(self, session_id: str):
+    async def handle_websocket(self, websocket: WebSocket) -> None:
         """
-        Insert a live document client element with a given session ID.
-        This element will automatically connect to the server and apply
-        mutations to the DOM as they are received.
-        """
-        with tag("tagflow-client", session_id=session_id):
-            pass
-
-    async def handle_websocket(self, websocket: WebSocket):
-        """
-        Default WebSocket route for receiving live updates from the browser
-        and sending out mutation events.
+        The client's first message names its session. From then on the
+        connection receives every region it has not yet seen at its latest
+        HTML, as one update per change, until the session ends.
         """
         await websocket.accept()
-
-        # For simplicity, assume the first message from the client is the session ID
         hello = await websocket.receive_json()
-        session_id = hello.get("id")
-        if session_id not in self._sessions:
-            await websocket.close(code=1008)
+        session_id = hello.get("id") if isinstance(hello, dict) else None
+        session = (
+            self._sessions.get(session_id)
+            if isinstance(session_id, str)
+            else None
+        )
+        if session is None:
+            await websocket.close(
+                code=SESSION_EXPIRED, reason="unknown session"
+            )
             return
 
-        session = self._sessions[session_id]
-        # We'll clone the session's recv channel to read from it locally
-
-        async def recv_loop():
+        async def push() -> None:
+            seen: dict[str, str] = {}
             while True:
+                changed = session.changed
+                morphs = [
+                    Morph(target, html)
+                    for target, html in session.regions.items()
+                    if seen.get(target) != html
+                ]
+                if morphs:
+                    await websocket.send_json(asdict(Update(morphs)))
+                    seen.update((m.target, m.html) for m in morphs)
+                await changed.wait()
+
+        async def expire() -> None:
+            await session.closed.wait()
+            await websocket.close(
+                code=SESSION_EXPIRED, reason="session ended"
+            )
+
+        session.attach()
+        try:
+            async with anyio.create_task_group() as connection:
+                connection.start_soon(push)
+                connection.start_soon(expire)
                 try:
-                    await websocket.receive_json()
+                    while True:
+                        await websocket.receive_json()
                 except WebSocketDisconnect:
-                    session.taskgroup.cancel_scope.cancel()
-                    return
-
-        async def send_loop():
-            txs = session.transaction_receiver.clone()
-            async with txs:
-                # Continuously push updates from the session to the browser
-                while True:
-                    try:
-                        msg = await txs.receive()
-                        await websocket.send_json(asdict(msg))
-                    except anyio.EndOfStream:
-                        break
-
-        async with anyio.create_task_group() as nursery:
-            nursery.start_soon(recv_loop)
-            nursery.start_soon(send_loop)
-
-
-async def spawn(fn: Callable[..., Any]) -> None:
-    """
-    Spawn a new task in the current document's live session task group.
-    This is helpful if your UI needs to do background polling, timers, etc.
-    """
-    doc = root_fragment.get()
-    if not doc.live_session:
-        raise RuntimeError("Cannot spawn task: document is not live")
-    doc.live_session.spawn(fn)
-
-
-@asynccontextmanager
-async def transition():
-    """
-    Context manager for atomic document updates. Mutations in this
-    context are collected into a Transaction and sent when the
-    block exits.
-    """
-    doc = root_fragment.get()
-    if doc.live_session:
-        async with doc.live_session.transition():
-            yield
-    else:
-        yield
+                    pass
+                connection.cancel_scope.cancel()
+        finally:
+            session.detach()

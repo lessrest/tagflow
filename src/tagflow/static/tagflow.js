@@ -1,230 +1,112 @@
 /**
- * Tagflow client-side implementation for handling live DOM updates
- * via WebSocket connections.
+ * Tagflow live client. `<tagflow-client session-id="…">` connects to the
+ * server's session and applies the updates it sends: each update is a list
+ * of morphs, and each morph is the new outer HTML of one element found by
+ * id. The element is morphed in place with Idiomorph (loaded separately as
+ * `window.Idiomorph`), the same algorithm htmx uses, so focus, scroll
+ * position, and unchanged nodes survive.
+ *
+ * Events, dispatched on the element with the `tagflow:` prefix:
+ *   connected, disconnected, update ({morphs}), morph ({target, ok, error}),
+ *   expired (cancelable; the default action reloads the page).
  */
 class TagflowClient extends HTMLElement {
-  // Define observed attributes
-  static get observedAttributes() {
-    return ["session-id"];
-  }
-
   constructor() {
     super();
     this.socket = null;
-    this.connected = false;
-    this.reconnectTimer = null;
-
-    // Bind methods to preserve 'this' context
-    this.handleMessage = this.handleMessage.bind(this);
-    this.handleOpen = this.handleOpen.bind(this);
-    this.handleClose = this.handleClose.bind(this);
-    this.handleError = this.handleError.bind(this);
+    this.retryTimer = null;
+    this.retryDelay = 1000;
   }
 
-  /**
-   * Called when the element is added to the document
-   */
   connectedCallback() {
-    if (!this.hasAttribute("session-id")) {
-      this.setAttribute("session-id", crypto.randomUUID());
-    }
     this.connect();
   }
 
-  /**
-   * Called when the element is removed from the document
-   */
   disconnectedCallback() {
-    this.disconnect();
+    this.close();
   }
 
-  /**
-   * Called when attributes change
-   */
-  attributeChangedCallback(name, oldValue, newValue) {
-    if (name === "session-id" && oldValue !== newValue && this.connected) {
-      this.reconnect();
-    }
-  }
-
-  /**
-   * Get the current session ID
-   */
   get sessionId() {
     return this.getAttribute("session-id");
   }
 
-  /**
-   * Get the WebSocket URL based on current protocol
-   */
-  get wsUrl() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.host}/.well-known/tagflow/live.ws`;
+  get socketUrl() {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${location.host}/.well-known/tagflow/live.ws`;
   }
 
-  /**
-   * Emit a custom event
-   */
-  emit(name, detail = null) {
-    const event = new CustomEvent(
-      `tagflow:${name}`,
-      detail ? { detail } : undefined
-    );
-    this.dispatchEvent(event);
+  emit(name, detail, options = {}) {
+    const event = new CustomEvent(`tagflow:${name}`, { detail, ...options });
+    return this.dispatchEvent(event);
   }
 
-  /**
-   * Find a target element by ID and throw if not found
-   */
-  findTarget(id, context = "element") {
-    const element = document.getElementById(id);
-    if (!element) {
-      throw new Error(`Target ${context} not found: ${id}`);
-    }
-    return element;
-  }
-
-  /**
-   * Connect to the Tagflow WebSocket endpoint
-   */
   connect() {
-    if (this.socket) {
-      this.disconnect();
-    }
-
-    this.socket = new WebSocket(this.wsUrl);
-    this.socket.onopen = this.handleOpen;
-    this.socket.onmessage = this.handleMessage;
-    this.socket.onclose = this.handleClose;
-    this.socket.onerror = this.handleError;
-  }
-
-  /**
-   * Reconnect to the WebSocket server
-   */
-  reconnect() {
-    this.disconnect();
-    this.connect();
-  }
-
-  /**
-   * Disconnect from the WebSocket server
-   */
-  disconnect() {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
-    this.connected = false;
-  }
-
-  /**
-   * WebSocket event handlers
-   */
-  handleOpen() {
-    this.connected = true;
-    this.emit("connected");
-    this.socket.send(JSON.stringify({ id: this.sessionId }));
-  }
-
-  handleMessage(event) {
-    const message = JSON.parse(event.data);
-    if (message.type === "update") {
-      if (document.startViewTransition) {
-        document.startViewTransition(() => {
-          this.applyMutations(message.mutations);
-        });
-      } else {
-        this.applyMutations(message.mutations);
-      }
-    }
-  }
-
-  handleClose() {
-    this.connected = false;
-    this.emit("disconnected");
-    this.reconnectTimer = setTimeout(() => this.connect(), 1000);
-  }
-
-  handleError(error) {
-    this.emit("error", error);
-  }
-
-  /**
-   * Apply a list of mutations to the DOM
-   */
-  applyMutations(mutations) {
-    const handlers = {
-      openTag: this.handleOpenTag.bind(this),
-      closeTag: this.handleCloseTag.bind(this),
-      setAttribute: this.handleSetAttribute.bind(this),
-      setText: this.handleSetText.bind(this),
-      clear: this.handleClear.bind(this),
+    this.close();
+    const socket = new WebSocket(this.socketUrl);
+    this.socket = socket;
+    socket.onopen = () => {
+      this.retryDelay = 1000;
+      socket.send(JSON.stringify({ id: this.sessionId }));
+      this.emit("connected");
     };
+    socket.onmessage = (event) => this.receive(JSON.parse(event.data));
+    socket.onclose = (event) => {
+      if (socket !== this.socket) return; // superseded by a newer connection
+      this.socket = null;
+      this.emit("disconnected", { code: event.code });
+      if (event.code === 4001) {
+        this.expire();
+      } else {
+        this.retryTimer = setTimeout(() => this.connect(), this.retryDelay);
+        this.retryDelay = Math.min(this.retryDelay * 2, 15000);
+      }
+    };
+  }
 
-    for (const mutation of mutations) {
+  close() {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (this.socket) {
+      const socket = this.socket;
+      this.socket = null;
+      socket.close();
+    }
+  }
+
+  /** The server no longer knows this session, so this page is stale. */
+  expire() {
+    if (this.emit("expired", null, { cancelable: true })) {
+      location.reload();
+    }
+  }
+
+  receive(message) {
+    if (message.type !== "update") return;
+    const apply = () => this.applyUpdate(message.morphs);
+    if (document.startViewTransition) {
+      document.startViewTransition(apply);
+    } else {
+      apply();
+    }
+  }
+
+  applyUpdate(morphs) {
+    for (const morph of morphs) {
+      const target = document.getElementById(morph.target);
+      if (!target) {
+        const error = new Error(`No element with id ${morph.target}`);
+        this.emit("morph", { target: morph.target, ok: false, error });
+        continue;
+      }
       try {
-        const handler = handlers[mutation.type];
-        if (handler) {
-          handler(mutation);
-          this.emit("mutation", { mutation, success: true });
-        }
+        Idiomorph.morph(target, morph.html, { morphStyle: "outerHTML" });
+        this.emit("morph", { target: morph.target, ok: true });
       } catch (error) {
-        this.emit("mutation", { mutation, success: false, error });
+        this.emit("morph", { target: morph.target, ok: false, error });
       }
     }
-  }
-
-  /**
-   * Mutation handlers
-   */
-  handleOpenTag({ target, id, tag, attrs = {} }) {
-    const parent = this.findTarget(target, "parent");
-
-    const svg = parent.closest("svg") || tag === "svg";
-    const element = svg
-      ? document.createElementNS("http://www.w3.org/2000/svg", tag)
-      : document.createElement(tag);
-
-    element.id = id;
-
-    // Apply initial attributes
-    Object.entries(attrs).forEach(([name, value]) => {
-      element.setAttribute(name, value);
-    });
-
-    parent.appendChild(element);
-  }
-
-  handleCloseTag({ target }) {
-    // We don't actually need to do anything here in the DOM
-    // since the element is already in the right place.
-    // This event is more for tracking the structure.
-    this.findTarget(target);
-  }
-
-  handleSetAttribute({ target, name, value }) {
-    const element = this.findTarget(target);
-    element.setAttribute(name, value);
-  }
-
-  handleSetText({ target, value }) {
-    const element = this.findTarget(target);
-    element.textContent = value;
-  }
-
-  handleClear({ target }) {
-    const element = this.findTarget(target);
-    while (element.firstChild) {
-      element.removeChild(element.firstChild);
-    }
+    this.emit("update", { morphs });
   }
 }
 
-// Register the custom element
 customElements.define("tagflow-client", TagflowClient);

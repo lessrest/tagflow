@@ -7,7 +7,6 @@ from tagflow import (
     DocumentMiddleware,
     Live,
     TagResponse,
-    document,
     tag,
     text,
 )
@@ -61,11 +60,10 @@ async def test_live_shutdown_cancels_sessions():
 
     with anyio.fail_after(2):
         async with live.run(FastAPI()):
-            with document():
-                session = await live.session()
-                session.spawn(background)
-                await started.wait()
+            session = await live.session()
+            session.spawn(background)
+            await started.wait()
         assert stopped.is_set()
         assert not live._sessions
-        with document(), pytest.raises(RuntimeError, match="Live.run"):
+        with pytest.raises(RuntimeError, match="Live.run"):
             await live.session()
