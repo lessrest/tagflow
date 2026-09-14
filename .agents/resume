@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dependencies persist in the snapshot. No authentication or services need repair.
+echo 'Tagflow is ready; use uv run --no-sync for the prepared Python environment.'

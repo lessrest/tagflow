@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+echo 'Installing missing Common Lisp tools and test dependencies'
+packages=(sbcl cl-asdf cl-alexandria cl-fiveam make rlwrap)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  time sudo apt-get update -qq
+  time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+fi
+
+# uv is included in the Amp orb base image. Respect the repository's Python pin.
+echo 'Preparing Python and locked dependencies (including development tools and extras)'
+time uv python install "$(cat .python-version)"
+# Preserve the committed lockfile, including its older uv metadata format.
+time uv sync --frozen --all-extras
+
+# Use Debian's ASDF systems, without downloading a separate Quicklisp distribution.
+echo 'Warming Common Lisp dependency compilation caches'
+time sbcl --noinform --non-interactive --eval '(require :asdf)' \
+  --eval '(asdf:load-system :alexandria)' \
+  --eval '(asdf:load-system :fiveam)'
