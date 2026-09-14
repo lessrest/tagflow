@@ -91,7 +91,7 @@ async def dashboard(request: Request) -> Response:
     return representation(
         request,
         lambda: views.shell(
-            "The native build survey",
+            "Native build campaign",
             lambda: views.dashboard(current, view),
         ),
         page=True,
@@ -122,9 +122,9 @@ async def build_page(
 
     def content() -> None:
         with tag.main(
-            ["mx-auto", "max-w-2xl", "px-4", "py-8"], id="workspace"
+            ["mx-auto", "max-w-2xl", "px-4", "py-3"], id="workspace"
         ):
-            with tag.a([views.LINK, "mb-5", "inline-block"], href=BASE):
+            with tag.a([views.LINK, "mb-2", "inline-block"], href=BASE):
                 text("← Campaign overview")
             views.detail(build, current, view, follow)
 

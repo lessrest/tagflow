@@ -36,6 +36,16 @@ async def test_pages_are_html_with_or_without_htmx(client):
     assert page.text.startswith("<!doctype html>")
     assert "set-cookie" not in page.headers
     soup = BeautifulSoup(page.text, "html.parser")
+    assert soup.h1 is not None
+    assert soup.h1.text == "Native build campaign"
+    assert "simulated data" in soup.text
+    assert "A different kind of live" not in soup.text
+    assert [n.text for n in soup.select("#summary strong")] == [
+        "18",
+        "2",
+        "4",
+        "0",
+    ]
     assert len(soup.select("#builds tbody tr")) == 8
     assert soup.select_one("[hx-sse\\:connect]") is not None
     assert soup.select_one('script[src*="htmx-4.0.0"]')

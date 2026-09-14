@@ -34,7 +34,7 @@ Setup also installs the dashboard's locked Tailwind build tools and compiles its
 CSS. No demo server starts automatically. Run the HTML/htmx dashboard with:
 
 ```sh
-amp orb service start dashboard --command 'uv run --no-sync hypercorn examples.dashboard.app:app --bind 0.0.0.0:8000' --port 8000 --portal
+amp orb services ensure
 ```
 
 Use the printed portal URL. The finite simulation starts with the process; use

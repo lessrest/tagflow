@@ -1,4 +1,4 @@
-# Tagflow Observatory
+# Tagflow campaign dashboard
 
 A simulated build-campaign dashboard using async Starlette, Tagflow, htmx **4.0.0**,
 and Tailwind **4.3.3**. Inspired by the Filnix campaign monitor's shared progress,

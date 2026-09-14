@@ -1,0 +1,9 @@
+services:
+  dashboard:
+    command: uv run --no-sync hypercorn examples.dashboard.app:app --bind "0.0.0.0:$PORT"
+    port: 8000
+    health: /campaigns/native
+    portal:
+      title: Tagflow dashboard
+      url: /campaigns/native
+      description: Simulated campaign. Restart the dashboard service to replay the two-minute run.

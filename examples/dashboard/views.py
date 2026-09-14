@@ -29,11 +29,10 @@ PANEL: ClassValue = [
 ]
 MUTED: ClassValue = ["text-slate-500"]
 SMALL: ClassValue = [MUTED, "text-xs"]
-EYEBROW: ClassValue = [
+TABLE_HEADING: ClassValue = [
     MUTED,
-    "text-[10px]",
+    "text-xs",
     "font-semibold",
-    "tracking-widest",
 ]
 FOCUS: ClassValue = [
     "focus-visible:outline-2",
@@ -45,12 +44,12 @@ BUTTON: ClassValue = [
     FOCUS,
     ["inline-flex", "items-center", "justify-center"],
     ["rounded-md", "border", "border-slate-200"],
-    ["px-3", "py-2", "text-xs", "cursor-pointer", "hover:bg-slate-100"],
+    ["px-2", "py-1", "text-xs", "cursor-pointer", "hover:bg-slate-100"],
 ]
 FIELD: ClassValue = [
     FOCUS,
     ["rounded-md", "border", "border-slate-200", "bg-white"],
-    ["px-3", "py-2.5", "text-xs", "text-slate-700"],
+    ["px-2", "py-1", "text-xs", "text-slate-700"],
 ]
 HEADING: ClassValue = ["text-lg", "font-semibold", "tracking-tight"]
 PANEL_TITLE: ClassValue = [
@@ -116,7 +115,7 @@ def label(value: str, kind: str = "") -> None:
             "inline-block",
             "rounded",
             "px-2",
-            "py-1",
+            "py-0.5",
             "text-[10px]",
             "font-medium",
         ],
@@ -140,7 +139,7 @@ def shell(title: str, content: Callable[[], None]) -> None:
     with tag.html(lang="en"):
         with tag.head():
             with tag.title():
-                text(f"{title} · Tagflow Observatory")
+                text(f"{title} · Tagflow")
             with tag.meta(charset="utf-8"):
                 pass
             with tag.meta(
@@ -182,39 +181,21 @@ def shell(title: str, content: Callable[[], None]) -> None:
                 [
                     FRAME,
                     "flex",
-                    "h-18",
+                    "h-10",
                     "items-center",
-                    "gap-7",
+                    "gap-3",
                     "border-b",
                     "border-slate-200",
                 ]
             ):
                 with tag.a(
-                    [FOCUS, "text-xl", "font-bold", "tracking-tighter"],
+                    [FOCUS, "font-semibold"],
                     href=BASE,
                 ):
-                    text("[t]  tagflow")
-                with tag.span([EYEBROW, "hidden", "flex-1", "sm:block"]):
-                    text("OBSERVATORY / 001")
-                label("SIMULATED CAMPAIGN", "neutral")
+                    text("Tagflow")
+                with tag.span(SMALL):
+                    text("Dashboard demo · simulated data")
             content()
-            with tag.footer(
-                [
-                    FRAME,
-                    SMALL,
-                    "flex",
-                    "flex-col",
-                    "gap-2",
-                    "justify-between",
-                    "border-t",
-                    "border-slate-200",
-                    "py-5",
-                    "sm:flex-row",
-                ]
-            ):
-                text("HTML is the interface. URLs are the state.")
-                with tag.span():
-                    text("Tagflow · async Starlette · htmx 4")
 
 
 def summary(snapshot: Snapshot, view: View) -> None:
@@ -234,30 +215,29 @@ def summary(snapshot: Snapshot, view: View) -> None:
             [PANEL, "grid", "grid-cols-4", "divide-x", "divide-slate-200"]
         ):
             for name, value, kind in (
-                ("INVENTORY", len(snapshot.builds), ""),
-                ("VERIFIED", counts["passed"], "passed"),
-                ("BUILDING", counts["running"], "running"),
-                ("FAILED", counts["failed"], "failed"),
+                ("Builds", len(snapshot.builds), ""),
+                ("Passed", counts["passed"], "passed"),
+                ("Running", counts["running"], "running"),
+                ("Failed", counts["failed"], "failed"),
             ):
-                with tag.div(["grid", "gap-2", "px-3", "py-4", "md:px-6"]):
-                    with tag.span([EYEBROW, "max-sm:text-[8px]"]):
+                with tag.div(["grid", "gap-0.5", "px-3", "py-2"]):
+                    with tag.span(SMALL):
                         text(name)
                     with tag.strong(
                         [
-                            "text-3xl",
-                            "md:text-4xl",
+                            "text-xl",
                             "font-medium",
                             "tracking-tight",
                             "tabular-nums",
                             NUMBERS.get(kind),
                         ]
                     ):
-                        text(str(value).zfill(2))
+                        text(str(value))
         done = counts["passed"] + counts["failed"]
         with tag.div(
             [
                 SMALL,
-                "mt-3",
+                "mt-1",
                 "flex",
                 "justify-between",
                 "gap-4",
@@ -270,11 +250,11 @@ def summary(snapshot: Snapshot, view: View) -> None:
                 text(
                     "Campaign complete"
                     if snapshot.complete
-                    else f"{counts['queued']} queued · 4-second simulation steps"
+                    else f"{counts['queued']} queued"
                 )
         with tag.progress(
             [
-                "mt-2",
+                "mt-1",
                 "block",
                 "h-1",
                 "w-full",
@@ -327,7 +307,7 @@ def build_status(build: Build, view: View) -> None:
         hx_sync="this:replace",
     ):
         label(build.state.title(), build.state)
-        with tag.p([SMALL, "mt-3"]):
+        with tag.p([SMALL, "mt-1"]):
             text(build.phase)
 
 
@@ -379,42 +359,37 @@ def detail(
     build: Build, snapshot: Snapshot, view: View, follow: bool = True
 ) -> None:
     with tag.aside(
-        [PANEL, "px-5", "pb-5"],
+        [PANEL, "p-3"],
         id="build-detail",
         aria_label="Build details",
     ):
-        with tag.div([PANEL_TITLE, "pt-5", "pb-3"]):
-            with tag.span(EYEBROW):
-                text(f"BUILD / {build.id:03}")
+        with tag.div([PANEL_TITLE, "mb-2"]):
+            with tag.h2(["text-base", "font-semibold"]):
+                text(build.name)
             with tag.a([LINK, "text-xs"], href=f"/builds/{build.id}"):
                 text("Permalink ↗")
-        with tag.h2(
-            ["mb-3", "text-2xl", "font-semibold", "tracking-tight"]
-        ):
-            text(build.name)
         build_status(build, view)
         with tag.dl(
             [
-                "my-5",
+                "my-2",
                 "grid",
                 "grid-cols-[80px_1fr]",
-                "gap-2",
+                "gap-1",
                 "border-y",
                 "border-slate-200",
-                "py-4",
+                "py-2",
                 "text-xs",
             ]
         ):
             for name, value in (
                 ("Platform", "x86_64-linux"),
                 ("Builder", f"worker-{(build.id - 1) % 4 + 1:02}"),
-                ("Source", "Deterministic fixture"),
             ):
                 with tag.dt(MUTED):
                     text(name)
                 with tag.dd():
                     text(value)
-        with tag.div([PANEL_TITLE, "mb-3"]):
+        with tag.div([PANEL_TITLE, "mb-2"]):
             with tag.h3(["text-sm", "font-semibold"]):
                 text("Build output")
             url = f"/builds/{build.id}?follow={int(not follow)}&transport={view.transport}"
@@ -431,16 +406,16 @@ def detail(
         with tag.div(
             [
                 FOCUS,
-                "h-56",
+                "max-h-48",
                 "overflow-auto",
                 "rounded-md",
                 "border",
                 "border-slate-200",
                 "bg-slate-50",
-                "p-3",
+                "p-2",
                 "font-mono",
                 "text-[10px]",
-                "leading-loose",
+                "leading-relaxed",
             ],
             id="build-log",
             role="region",
@@ -448,50 +423,35 @@ def detail(
             tabindex="0",
         ):
             log_window(build, snapshot.epoch, 0, follow)
-        with tag.p([SMALL, "mt-4", "leading-relaxed"]):
-            text(
-                "A resource, not a session. This log can be read independently of the dashboard."
-            )
 
 
 def dashboard(snapshot: Snapshot, view: View) -> None:
-    with tag.main([FRAME, "py-8"], id="workspace", tabindex="-1"):
+    with tag.main([FRAME, "py-3"], id="workspace", tabindex="-1"):
         if view.transport == "sse" and not snapshot.complete:
             with tag.div(id="changes", hx_swap="none"):
                 attr("hx-sse:connect", f"{BASE}/events")
                 attr("hx-sse:close", "campaign-complete")
         with tag.div(
             [
-                "mb-7",
+                "mb-3",
                 "flex",
                 "flex-col",
-                "gap-6",
+                "gap-2",
                 "md:flex-row",
                 "md:items-center",
                 "md:justify-between",
             ]
         ):
             with tag.div():
-                with tag.p(EYEBROW):
-                    text("CAMPAIGN / NATIVE-001")
                 with tag.h1(
                     [
-                        "mt-2",
-                        "mb-3",
-                        "text-3xl",
-                        "xl:text-4xl",
+                        "text-xl",
                         "font-semibold",
                         "tracking-tight",
                     ]
                 ):
-                    text("The native build survey")
-                with tag.p([MUTED, "max-w-xl", "leading-relaxed"]):
-                    text(
-                        "A small inventory. A long-running idea. Watch shared resources change, without a private live session."
-                    )
+                    text("Native build campaign")
             with tag.div(["grid", "shrink-0", "gap-2"]):
-                with tag.span(EYEBROW):
-                    text("UPDATE TRANSPORT")
                 with tag.nav(
                     [
                         "flex",
@@ -514,7 +474,7 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                                 FOCUS,
                                 "rounded",
                                 "px-3",
-                                "py-2",
+                                "py-1",
                                 "text-xs",
                                 ["bg-white", "text-blue-700", "shadow-sm"]
                                 if view.transport == mode
@@ -527,27 +487,21 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         ):
                             navigation(url)
                             text(title)
-                with tag.span(SMALL):
-                    text("Same resources. Different delivery.")
         summary(snapshot, view)
         with tag.div(
             [
-                "mt-7",
+                "mt-3",
                 "grid",
                 "items-start",
-                "gap-5",
+                "gap-3",
                 "lg:grid-cols-[minmax(0,1fr)_320px]",
             ]
         ):
             with tag.section(PANEL, aria_label="Build inventory"):
-                with tag.div([PANEL_TITLE, "px-5", "pt-5", "pb-3"]):
+                with tag.div([PANEL_TITLE, "px-3", "pt-2", "pb-1"]):
                     with tag.div():
                         with tag.h2(HEADING):
                             text("Build inventory")
-                        with tag.p([SMALL, "mt-1"]):
-                            text(
-                                "Held while you read. Refresh on your terms."
-                            )
                     updates(snapshot, view, snapshot.revision)
                 with tag.form(
                     [
@@ -555,9 +509,8 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         "flex",
                         "flex-wrap",
                         "gap-2",
-                        "px-5",
-                        "pt-3",
-                        "pb-5",
+                        "px-3",
+                        "py-2",
                     ],
                     method="get",
                     action=BASE,
@@ -625,19 +578,18 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         ):
                             with tag.tr():
                                 for title in (
-                                    "BUILD",
-                                    "PACKAGE",
-                                    "STATE",
-                                    "LAST OBSERVATION",
+                                    "Build",
+                                    "Package",
+                                    "State",
+                                    "Last observation",
                                 ):
                                     with tag.th(
                                         [
-                                            EYEBROW,
-                                            "px-4",
-                                            "py-3",
-                                            "first:pl-5",
+                                            TABLE_HEADING,
+                                            "px-3",
+                                            "py-1.5",
                                             ["hidden", "xl:table-cell"]
-                                            if title == "LAST OBSERVATION"
+                                            if title == "Last observation"
                                             else None,
                                         ],
                                         scope="col",
@@ -647,8 +599,8 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                             [
                                 "divide-y",
                                 "divide-slate-100",
-                                "[&_td]:px-4",
-                                "[&_td]:py-3.5",
+                                "[&_td]:px-3",
+                                "[&_td]:py-1",
                             ]
                         ):
                             for build in rows:
@@ -685,7 +637,7 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                                     ):
                                         text(build.phase)
                 if not rows:
-                    with tag.p([MUTED, "px-5", "py-8"]):
+                    with tag.p([MUTED, "px-3", "py-3"]):
                         text(
                             "No builds match this view. Try another filter or an earlier page."
                         )
@@ -694,8 +646,8 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         PANEL_TITLE,
                         "border-t",
                         "border-slate-200",
-                        "px-5",
-                        "py-4",
+                        "px-3",
+                        "py-2",
                     ],
                     aria_label="Inventory pages",
                 ):
@@ -723,25 +675,16 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                         "border-t",
                         "border-slate-200",
                         "bg-slate-50/50",
-                        "px-5",
-                        "py-4",
-                        "leading-relaxed",
+                        "px-3",
+                        "py-1.5",
                     ]
                 ):
-                    text(
-                        "The overview follows the campaign. This table is a snapshot; new results never move a row beneath your cursor."
-                    )
+                    text("Rows update only when you refresh the inventory.")
             chosen = next(
                 (b for b in snapshot.builds if b.state == "running"),
                 snapshot.builds[0],
             )
             detail(chosen, snapshot, view)
-        with tag.div([SMALL, "mt-6", "max-w-4xl", "leading-loose"]):
-            with tag.strong("text-slate-700"):
-                text("A different kind of live.")
-            text(
-                " Server-rendered HTML · conditional GETs · named SSE notifications · cursor-based log pages. No application JSON requests. No hand-written DOM updates."
-            )
         with tag.span(
             [
                 "htmx-indicator",
