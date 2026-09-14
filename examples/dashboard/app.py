@@ -124,6 +124,7 @@ async def build_page(
         with tag.main(
             ["mx-auto", "max-w-2xl", "px-4", "py-3"], id="workspace"
         ):
+            views.connection(current, view)
             with tag.a([views.LINK, "mb-2", "inline-block"], href=BASE):
                 text("← Campaign overview")
             views.detail(build, current, view, follow)
@@ -143,7 +144,7 @@ async def build_status(request: Request) -> Response:
 
 
 async def log(request: Request) -> Response:
-    current = snapshot(request)
+    current, view = snapshot(request), options(request)
     build = build_for(request, current)
     after = integer(request.query_params.get("after", "0"))
     follow = bool(integer(request.query_params.get("follow", "1"), 0, 1))
@@ -154,16 +155,20 @@ async def log(request: Request) -> Response:
         response = await build_page(request, conditional=False)
         response.headers.update(
             {
-                "HX-Retarget": "#build-detail",
+                "HX-Retarget": "closest #build-detail",
                 "HX-Reselect": "#build-detail",
-                "HX-Reswap": "outerHTML",
+                "HX-Reswap": "outerHTML ignoreTitle:true",
             }
         )
         response.headers["Cache-Control"] = "no-store"
         return response
     return representation(
         request,
-        lambda: views.log_window(build, current.epoch, after, follow),
+        lambda: views.shell(
+            f"{build.name}: build output",
+            lambda: views.log_page(build, current, after, follow, view),
+        ),
+        page=True,
     )
 
 

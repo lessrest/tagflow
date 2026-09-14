@@ -3,9 +3,11 @@
   "private": true,
   "scripts": {
     "build": "tailwindcss -i tailwind.css -o static/dashboard.css --minify",
-    "watch": "tailwindcss -i tailwind.css -o static/dashboard.css --watch"
+    "watch": "tailwindcss -i tailwind.css -o static/dashboard.css --watch",
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/cli": "4.3.3",
     "tailwindcss": "4.3.3"
   }

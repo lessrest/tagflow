@@ -24,6 +24,8 @@ time uv sync --locked --all-extras
 echo 'Preparing locked dashboard styling tools and compiled Tailwind utilities'
 time npm --prefix examples/dashboard ci --no-audit --no-fund
 time npm --prefix examples/dashboard run build
+echo 'Preparing the pinned Chromium browser for dashboard regression tests'
+time npm exec --prefix examples/dashboard -- playwright install chromium
 
 # Use Debian's ASDF systems, without downloading a separate Quicklisp distribution.
 echo 'Warming Common Lisp dependency compilation caches'

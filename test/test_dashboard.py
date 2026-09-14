@@ -130,6 +130,7 @@ async def test_inventory_notification_does_not_replace_rows(
 async def test_log_pages_are_bounded_and_repeatable(client, campaign):
     url = "/builds/1/log"
     first = await client.get(url)
+    assert first.text.startswith("<!doctype html>")
     soup = BeautifulSoup(first.text, "html.parser")
     first_ids = [line["id"] for line in soup.select(".log-line")]
     assert len(first_ids) == 5
@@ -157,16 +158,35 @@ async def test_log_pages_are_bounded_and_repeatable(client, campaign):
 async def test_log_pause_and_reset(client):
     paused = await client.get("/builds/6?follow=0")
     assert "Resume following" in paused.text
-    assert "load delay:2s" not in paused.text
+    assert 'hx-trigger="every 2s, click"' not in paused.text
     reset = await client.get(
         "/builds/6/log?epoch=old-process&after=100",
         headers={"If-None-Match": "*"},
     )
     assert reset.status_code == 200
     assert reset.headers["cache-control"] == "no-store"
-    assert reset.headers["hx-retarget"] == "#build-detail"
-    assert reset.headers["hx-reswap"] == "outerHTML"
+    assert reset.headers["hx-retarget"] == "closest #build-detail"
+    assert reset.headers["hx-reswap"] == "outerHTML ignoreTitle:true"
     assert 'id="build-detail"' in reset.text
+
+
+@pytest.mark.anyio
+async def test_standalone_transport_and_log_recovery(client):
+    sse = await client.get("/builds/6")
+    assert "hx-sse:connect=" in sse.text
+    poll = await client.get("/builds/6?transport=poll")
+    assert "hx-sse:connect=" not in poll.text
+    soup = BeautifulSoup(poll.text, "html.parser")
+    tail = soup.select_one(".log-tail")
+    assert tail is not None
+    assert "transport=poll" in tail["href"]
+    assert tail["hx-trigger"] == "every 2s, click"
+    assert tail["hx-sync"] == "this:drop"
+    reset = await client.get("/builds/6/log?epoch=old&transport=poll")
+    soup = BeautifulSoup(reset.text, "html.parser")
+    status = soup.select_one("#build-status")
+    assert status is not None
+    assert status["hx-trigger"] == "every 3s"
 
 
 @pytest.mark.anyio

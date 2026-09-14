@@ -311,7 +311,9 @@ def build_status(build: Build, view: View) -> None:
             text(build.phase)
 
 
-def log_window(build: Build, epoch: str, after: int, follow: bool) -> None:
+def log_window(
+    build: Build, epoch: str, after: int, follow: bool, view: View
+) -> None:
     end = min(after + 5, len(build.lines))
     for offset in range(after, end):
         with tag.div(
@@ -332,14 +334,15 @@ def log_window(build: Build, epoch: str, after: int, follow: bool) -> None:
     if end < len(build.lines) or (
         follow and build.state in ("queued", "running")
     ):
-        url = f"/builds/{build.id}/log?{urlencode(dict(epoch=epoch, after=end, follow=int(follow)))}"
+        url = f"/builds/{build.id}/log?{urlencode(dict(epoch=epoch, after=end, follow=int(follow), transport=view.transport))}"
         with tag.a(
             [LINK, "log-tail", "mt-2", "block", "text-[10px]"],
             href=url,
             hx_get=url,
-            hx_swap="outerHTML",
-            hx_trigger="load delay:2s" if follow else "click",
-            hx_sync="this:replace",
+            hx_select="#log-chunk > *",
+            hx_swap="outerHTML ignoreTitle:true",
+            hx_trigger="every 2s, click" if follow else "click",
+            hx_sync="this:drop",
         ):
             text(
                 "Waiting for output…"
@@ -399,7 +402,7 @@ def detail(
                 hx_get=url,
                 hx_select="#build-detail",
                 hx_target="#build-detail",
-                hx_swap="outerHTML",
+                hx_swap="outerHTML ignoreTitle:true",
                 hx_sync="#build-detail:replace",
             ):
                 text("Pause following" if follow else "Resume following")
@@ -422,15 +425,32 @@ def detail(
             aria_label="Build output",
             tabindex="0",
         ):
-            log_window(build, snapshot.epoch, 0, follow)
+            log_window(build, snapshot.epoch, 0, follow, view)
+
+
+def connection(snapshot: Snapshot, view: View) -> None:
+    if view.transport == "sse" and not snapshot.complete:
+        with tag.div(id="changes", hx_swap="none"):
+            attr("hx-sse:connect", f"{BASE}/events")
+            attr("hx-sse:close", "campaign-complete")
+
+
+def log_page(
+    build: Build, snapshot: Snapshot, after: int, follow: bool, view: View
+) -> None:
+    with tag.main([FRAME, "py-3"], id="workspace"):
+        with tag.a(LINK, href=f"/builds/{build.id}?{view.query()}"):
+            text(f"← {build.name}")
+        with tag.section([PANEL, "mt-2", "p-3"], id="build-detail"):
+            with tag.h1([HEADING, "mb-2"]):
+                text(f"{build.name}: build output")
+            with tag.div(["font-mono", "text-xs"], id="log-chunk"):
+                log_window(build, snapshot.epoch, after, follow, view)
 
 
 def dashboard(snapshot: Snapshot, view: View) -> None:
     with tag.main([FRAME, "py-3"], id="workspace", tabindex="-1"):
-        if view.transport == "sse" and not snapshot.complete:
-            with tag.div(id="changes", hx_swap="none"):
-                attr("hx-sse:connect", f"{BASE}/events")
-                attr("hx-sse:close", "campaign-complete")
+        connection(snapshot, view)
         with tag.div(
             [
                 "mb-3",
@@ -624,7 +644,7 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                                             hx_get=url,
                                             hx_select="#build-detail",
                                             hx_target="#build-detail",
-                                            hx_swap="outerHTML",
+                                            hx_swap="outerHTML ignoreTitle:true",
                                             hx_sync="#build-detail:replace",
                                         ):
                                             text(build.name)

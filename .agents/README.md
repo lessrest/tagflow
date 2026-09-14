@@ -30,8 +30,10 @@ rather than the demo's inline script environment, run:
 uv run --no-sync python demo.py
 ```
 
-Setup also installs the dashboard's locked Tailwind build tools and compiles its
-CSS. No demo server starts automatically. Run the HTML/htmx dashboard with:
+Setup also installs the dashboard's locked Tailwind and Playwright tools, compiles
+its CSS, and prepares Chromium. Run browser regressions with
+`npm --prefix examples/dashboard test`. No demo server starts automatically.
+Run the HTML/htmx dashboard with:
 
 ```sh
 amp orb services ensure
