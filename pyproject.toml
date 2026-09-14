@@ -48,9 +48,9 @@ dev = [
     # Static type checker
     "pyright==1.*",
     # Popular Python testing framework
-    "pytest==8.*",
+    "pytest>=9.0.3,<10",
     # Generates Markdown reports from pytest results
-    "pytest-md-report==0.6.*",
+    "pytest-md-report==0.8.*",
     # Auto-rerun pytest on file changes
     "pytest-watcher==0.*",
     # Run tests in parallel

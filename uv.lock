@@ -607,7 +607,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "8.4.2"
+version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -616,9 +616,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+    { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
 ]
 
 [[package]]
@@ -637,7 +637,7 @@ wheels = [
 
 [[package]]
 name = "pytest-md-report"
-version = "0.6.3"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytablewriter" },
@@ -645,9 +645,9 @@ dependencies = [
     { name = "tcolorpy" },
     { name = "typepy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/ec/5864e21c74e6ab2c493578bd6bbef775c4db4c1e69a2aad8830408341170/pytest_md_report-0.6.3.tar.gz", hash = "sha256:7e91ed0c0421b1493c1126ef996bdb521882a96a20cbd5b2cf0a38945495a852", size = 283723, upload-time = "2025-01-02T09:10:48.201Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/2e/14711f6af84b1f637167b52aef179e307a580dfb54f7da8b0c06c3125453/pytest_md_report-0.8.0.tar.gz", hash = "sha256:c8e3b7f1f91a0e8e7d1b946e1b224f4f39187da0df2f812731361a436a17f472", size = 289649, upload-time = "2026-05-04T04:30:34.384Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/ad/99382de65e29fa6230b592f176c4290084667dbf1404c0ef266a34bb2c46/pytest_md_report-0.6.3-py3-none-any.whl", hash = "sha256:374126c013b29aab4dc585a318c4bbc5213fabafc101f9812f428cc4847b6a92", size = 13928, upload-time = "2025-01-02T09:10:45.227Z" },
+    { url = "https://files.pythonhosted.org/packages/31/47/c847f9095e466e5933570d3b603eee78389b3bfc534d017b43f6cc62fa1a/pytest_md_report-0.8.0-py3-none-any.whl", hash = "sha256:d2ba54b4be2071ea91bf3a17b215f70093fd5b8148356cb33f9a7a9ac53f177a", size = 17185, upload-time = "2026-05-04T04:30:32.556Z" },
 ]
 
 [[package]]
@@ -856,9 +856,9 @@ dev = [
     { name = "coverage", specifier = "==7.*" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "pyright", specifier = "==1.*" },
-    { name = "pytest", specifier = "==8.*" },
+    { name = "pytest", specifier = ">=9.0.3,<10" },
     { name = "pytest-cov", specifier = "==6.*" },
-    { name = "pytest-md-report", specifier = "==0.6.*" },
+    { name = "pytest-md-report", specifier = "==0.8.*" },
     { name = "pytest-watcher", specifier = "==0.*" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "rich", specifier = ">=13.9.4" },
