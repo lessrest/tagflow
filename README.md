@@ -213,8 +213,11 @@ The overview updates automatically; the inventory stays still until you refresh 
 There are no viewer sessions, application JSON requests, or handwritten DOM updates.
 
 Styles are composed as nested Tagflow class-token lists, including conditional
-utility groups. This is an alternative to—not a replacement for—the WebSocket
-live-document API below.
+utility groups; the `ClassValue` type for such lists is exported from `tagflow`.
+The example's `hx.py` and `responses.py` modules name the htmx reading contracts
+and the conditional-response boundary it relies on; they are candidates for
+future library helpers. This is an alternative to—not a replacement for—the
+WebSocket live-document API below.
 
 ## Live Documents (early working prototype)
 

@@ -14,6 +14,8 @@ from .tagflow import (
     TagResponse,
     XMLResponse,
     Live,
+    ClassValue,
+    AttrValue,
 )
 
 
@@ -33,4 +35,6 @@ __all__ = [
     "TagResponse",
     "XMLResponse",
     "Live",
+    "ClassValue",
+    "AttrValue",
 ]

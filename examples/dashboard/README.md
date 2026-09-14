@@ -47,6 +47,40 @@ npm --prefix examples/dashboard run build
 npm --prefix examples/dashboard run watch
 ```
 
+## Cookbook modules: candidates for Tagflow itself
+
+Two small modules hold the glue that is not about campaigns. They are
+prototypes for possible `tagflow.htmx` and `tagflow.starlette` helpers, kept in
+the example until they prove themselves here.
+
+`hx.py` names one htmx 4 reading contract per function and sets the matching
+attributes on the current Tagflow element: `navigate` (same-page navigation that
+pushes history and updates the title), `preview` (load a region into the same
+region, changing neither), `refresh` (a self-refreshing embedded representation
+that morphs in place and stops when `done`), `read_cursor` (replace yourself with
+the next page; keep retrying on an interval and on click; never cancel a slow
+response), `connect` (an SSE source for named events), and `recover_reader`
+(response headers that replace the reader which asked, resolved with `closest`,
+never by global ID). Each docstring records the bug the bundle prevents. The
+generated attributes stay visible in the HTML and `attr()` remains available.
+
+`responses.py` provides `render_response(request, component, *, cache_control,
+doctype, conditional, headers, status_code)`: render once inside an isolated
+document, hash the actual bytes into a strong ETag, and answer a matching GET or
+HEAD `If-None-Match` with 304. Entity tags are parsed as quoted tags with weak
+comparison, not split on commas. Cache policy is a required argument; `app.py`'s
+`representation()` is where this demo decides that its data is public. Recovery
+responses pass `conditional=False` with `no-store` and get no validator.
+
+`test/test_dashboard_cookbook.py` pins these contracts independently of the app.
+The rule for promoting a helper into the library: one of the browser
+failure/reordering regressions must be expressible as a Tagflow integration test
+while the corresponding application glue is deleted. Saving `with` statements or
+hiding endpoint names is not enough. Not proposed: viewer sessions, a DOM-patch
+protocol over SSE, automatic query-parameter forwarding, or a helper that claims
+to guarantee an SSE connection survives region swaps; placement of `connect`
+remains an application decision checked by the browser suite.
+
 ## HTML resource design
 
 | Resource | Representation / behavior |

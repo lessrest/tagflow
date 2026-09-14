@@ -4,9 +4,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from urllib.parse import urlencode
 
-from tagflow import attr, document, tag, text
-from tagflow.tagflow import ClassValue
+from tagflow import tag, text, ClassValue
 
+from . import hx
 from .model import Build, Snapshot, STATES
 
 
@@ -102,12 +102,6 @@ class View:
         )
 
 
-def render(component: Callable[[], None]) -> str:
-    with document() as doc:
-        component()
-    return doc.to_html()
-
-
 def label(value: str, kind: str = "") -> None:
     with tag.span(
         [
@@ -126,13 +120,7 @@ def label(value: str, kind: str = "") -> None:
 
 def navigation(url: str) -> None:
     """Enhance a real link or GET form, without negotiating fragments."""
-    attr("hx-get", url)
-    attr("hx-select", "#workspace")
-    attr("hx-target", "#workspace")
-    attr("hx-swap", "outerHTML")
-    attr("hx-push-url", "true")
-    attr("hx-sync", "#workspace:replace")
-    attr("hx-indicator", "#loading")
+    hx.navigate(url, region="#workspace", indicator="#loading")
 
 
 def shell(title: str, content: Callable[[], None]) -> None:
@@ -203,11 +191,12 @@ def summary(snapshot: Snapshot, view: View) -> None:
         id="summary",
         aria_label="Live campaign summary",
         data_revision=snapshot.revision,
-        hx_get=f"{BASE}/summary?transport={view.transport}",
-        hx_trigger=view.trigger if not snapshot.complete else "none",
-        hx_swap="outerMorph",
-        hx_sync="this:replace",
     ):
+        hx.refresh(
+            f"{BASE}/summary?transport={view.transport}",
+            trigger=view.trigger,
+            done=snapshot.complete,
+        )
         counts = {
             s: sum(b.state == s for b in snapshot.builds) for s in STATES
         }
@@ -278,12 +267,9 @@ def updates(snapshot: Snapshot, view: View, seen: str) -> None:
     with tag.div(
         ["text-xs", "whitespace-nowrap"],
         id="updates",
-        hx_get=url,
-        hx_trigger=view.trigger if not snapshot.complete else "none",
-        hx_swap="outerMorph",
-        hx_sync="this:replace",
         aria_live="polite",
     ):
+        hx.refresh(url, trigger=view.trigger, done=snapshot.complete)
         if seen != snapshot.revision:
             with tag.a(
                 [BUTTON, "update", "bg-blue-50", "text-blue-700"],
@@ -297,15 +283,12 @@ def updates(snapshot: Snapshot, view: View, seen: str) -> None:
 
 
 def build_status(build: Build, view: View) -> None:
-    with tag.div(
-        id="build-status",
-        hx_get=f"/builds/{build.id}/status?transport={view.transport}",
-        hx_trigger=view.trigger
-        if build.state in ("queued", "running")
-        else "none",
-        hx_swap="outerMorph",
-        hx_sync="this:replace",
-    ):
+    with tag.div(id="build-status"):
+        hx.refresh(
+            f"/builds/{build.id}/status?transport={view.transport}",
+            trigger=view.trigger,
+            done=build.state not in ("queued", "running"),
+        )
         label(build.state.title(), build.state)
         with tag.p([SMALL, "mt-1"]):
             text(build.phase)
@@ -338,12 +321,12 @@ def log_window(
         with tag.a(
             [LINK, "log-tail", "mt-2", "block", "text-[10px]"],
             href=url,
-            hx_get=url,
-            hx_select="#log-chunk > *",
-            hx_swap="outerHTML ignoreTitle:true",
-            hx_trigger="every 2s, click" if follow else "click",
-            hx_sync="this:drop",
         ):
+            hx.read_cursor(
+                url,
+                select="#log-chunk > *",
+                every="2s" if follow else None,
+            )
             text(
                 "Waiting for output…"
                 if end == len(build.lines)
@@ -396,15 +379,8 @@ def detail(
             with tag.h3(["text-sm", "font-semibold"]):
                 text("Build output")
             url = f"/builds/{build.id}?follow={int(not follow)}&transport={view.transport}"
-            with tag.a(
-                [LINK, "text-[10px]"],
-                href=url,
-                hx_get=url,
-                hx_select="#build-detail",
-                hx_target="#build-detail",
-                hx_swap="outerHTML ignoreTitle:true",
-                hx_sync="#build-detail:replace",
-            ):
+            with tag.a([LINK, "text-[10px]"], href=url):
+                hx.preview(url, region="#build-detail")
                 text("Pause following" if follow else "Resume following")
         with tag.div(
             [
@@ -431,8 +407,7 @@ def detail(
 def connection(snapshot: Snapshot, view: View) -> None:
     if view.transport == "sse" and not snapshot.complete:
         with tag.div(id="changes", hx_swap="none"):
-            attr("hx-sse:connect", f"{BASE}/events")
-            attr("hx-sse:close", "campaign-complete")
+            hx.connect(f"{BASE}/events", close_on="campaign-complete")
 
 
 def log_page(
@@ -641,12 +616,10 @@ def dashboard(snapshot: Snapshot, view: View) -> None:
                                                 "font-semibold",
                                             ],
                                             href=url,
-                                            hx_get=url,
-                                            hx_select="#build-detail",
-                                            hx_target="#build-detail",
-                                            hx_swap="outerHTML ignoreTitle:true",
-                                            hx_sync="#build-detail:replace",
                                         ):
+                                            hx.preview(
+                                                url, region="#build-detail"
+                                            )
                                             text(build.name)
                                     with tag.td():
                                         label(

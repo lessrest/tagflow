@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from hashlib import sha256
 from pathlib import Path
 
 import anyio
@@ -10,7 +9,6 @@ from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import (
-    HTMLResponse,
     RedirectResponse,
     Response,
     StreamingResponse,
@@ -20,9 +18,10 @@ from starlette.staticfiles import StaticFiles
 
 from tagflow import tag, text
 
-from . import views
+from . import hx, views
 from .model import Build, Campaign, Snapshot, STATES
 from .views import BASE, View
+from .responses import render_response
 
 
 def integer(value: str, minimum: int = 0, maximum: int = 10000) -> int:
@@ -54,20 +53,12 @@ def representation(
     component: Callable[[], None],
     *,
     page: bool = False,
-    conditional: bool = True,
 ) -> Response:
-    body = ("<!doctype html>\n" if page else "") + views.render(component)
-    # Hash the actual representation, not a loose event cursor. This tiny demo
-    # trades render cost for correctness, including filters and template edits.
-    etag = '"' + sha256(body.encode()).hexdigest() + '"'
-    headers = {"ETag": etag, "Cache-Control": "public, no-cache"}
-    candidates = request.headers.get("if-none-match", "").split(",")
-    if conditional and any(
-        value.strip().removeprefix("W/") in (etag, "*")
-        for value in candidates
-    ):
-        return Response(status_code=304, headers=headers)
-    return HTMLResponse(body, headers=headers)
+    # This demo's data is public: representations may be stored but must be
+    # revalidated. Validators hash the actual bytes, not a loose event cursor.
+    return render_response(
+        request, component, cache_control="public, no-cache", doctype=page
+    )
 
 
 def snapshot(request: Request) -> Snapshot:
@@ -113,10 +104,9 @@ async def updates(request: Request) -> Response:
     )
 
 
-async def build_page(
-    request: Request, *, conditional: bool = True
-) -> Response:
-    current, view = snapshot(request), options(request)
+def build_page_content(
+    request: Request, current: Snapshot, view: View
+) -> tuple[str, Callable[[], None]]:
     build = build_for(request, current)
     follow = bool(integer(request.query_params.get("follow", "1"), 0, 1))
 
@@ -129,11 +119,14 @@ async def build_page(
                 text("← Campaign overview")
             views.detail(build, current, view, follow)
 
+    return build.name, content
+
+
+async def build_page(request: Request) -> Response:
+    current, view = snapshot(request), options(request)
+    title, content = build_page_content(request, current, view)
     return representation(
-        request,
-        lambda: views.shell(build.name, content),
-        page=True,
-        conditional=conditional,
+        request, lambda: views.shell(title, content), page=True
     )
 
 
@@ -151,17 +144,17 @@ async def log(request: Request) -> Response:
     epoch = request.query_params.get("epoch", current.epoch)
     if epoch != current.epoch or after > len(build.lines):
         # A restarted simulation is a different log, never silently reuse an
-        # old offset. Let htmx replace the old reader, not append duplicate lines.
-        response = await build_page(request, conditional=False)
-        response.headers.update(
-            {
-                "HX-Retarget": "closest #build-detail",
-                "HX-Reselect": "#build-detail",
-                "HX-Reswap": "outerHTML ignoreTitle:true",
-            }
+        # old offset. Replace the reader that asked, not append duplicate lines
+        # and not whichever newer reader now carries the same ID.
+        title, content = build_page_content(request, current, view)
+        return render_response(
+            request,
+            lambda: views.shell(title, content),
+            cache_control="no-store",
+            doctype=True,
+            conditional=False,
+            headers=hx.recover_reader(closest="#build-detail"),
         )
-        response.headers["Cache-Control"] = "no-store"
-        return response
     return representation(
         request,
         lambda: views.shell(
