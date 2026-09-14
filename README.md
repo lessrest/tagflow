@@ -203,6 +203,19 @@ def home():
                 text("Welcome!")
 ```
 
+## Resource-oriented live dashboards
+
+The [campaign dashboard example](examples/dashboard/README.md) combines Tagflow,
+async Starlette, htmx 4, and compiled Tailwind utilities. Ordinary HTML resources
+support filtering, pagination, build permalinks, and cursor-based logs. Choose
+named SSE notifications followed by GETs, or polling the same resources.
+The overview updates automatically; the inventory stays still until you refresh it.
+There are no viewer sessions, application JSON requests, or handwritten DOM updates.
+
+Styles are composed as nested Tagflow class-token lists, including conditional
+utility groups. This is an alternative to—not a replacement for—the WebSocket
+live-document API below.
+
 ## Live Documents (early working prototype)
 
 Tagflow also offers "live documents" that asynchronous server tasks can update

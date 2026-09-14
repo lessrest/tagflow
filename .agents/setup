@@ -21,6 +21,10 @@ echo 'Preparing Python and locked dependencies (including development tools and 
 time uv python install "$(cat .python-version)"
 time uv sync --locked --all-extras
 
+echo 'Preparing locked dashboard styling tools and compiled Tailwind utilities'
+time npm --prefix examples/dashboard ci --no-audit --no-fund
+time npm --prefix examples/dashboard run build
+
 # Use Debian's ASDF systems, without downloading a separate Quicklisp distribution.
 echo 'Warming Common Lisp dependency compilation caches'
 time sbcl --noinform --non-interactive --eval '(require :asdf)' \

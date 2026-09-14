@@ -30,4 +30,13 @@ rather than the demo's inline script environment, run:
 uv run --no-sync python demo.py
 ```
 
-No demo server starts automatically.
+Setup also installs the dashboard's locked Tailwind build tools and compiles its
+CSS. No demo server starts automatically. Run the HTML/htmx dashboard with:
+
+```sh
+amp orb service start dashboard --command 'uv run --no-sync hypercorn examples.dashboard.app:app --bind 0.0.0.0:8000' --port 8000 --portal
+```
+
+Use the printed portal URL. The finite simulation starts with the process; use
+`amp orb service restart dashboard` to replay it. See
+[the dashboard guide](../examples/dashboard/README.md) for styling and protocol details.
