@@ -188,7 +188,7 @@ async def counter_page():
             with tag.div(
                 classes="bg-white rounded-lg shadow p-8 inline-block"
             ):
-                counter(0)
+                session.mount(lambda: counter(0))
 
     session.spawn(count)
     logger.info("rendered counter page for %s", session.id)

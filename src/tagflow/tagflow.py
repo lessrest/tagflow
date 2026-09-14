@@ -3,6 +3,7 @@ Block-oriented HTML/XML generation with context managers, plus live regions
 that a server can re-render and push to the browser over a WebSocket.
 """
 
+import copy
 import random
 import logging
 import pathlib
@@ -433,18 +434,29 @@ def render_region(component: Callable[[], None]) -> Region:
     """
     with document() as doc:
         component()
-    roots = list(doc.element)
-    if len(roots) != 1:
+    return _region_added_to(doc.element, since=0)
+
+
+def _region_added_to(parent: ET.Element, *, since: int) -> Region:
+    """The one identified element appended to `parent` after index `since`."""
+    added = list(parent)[since:]
+    if len(added) != 1:
         raise ValueError(
             f"A region must render exactly one root element, "
-            f"got {len(roots)}"
+            f"got {len(added)}"
         )
-    region_id = roots[0].get("id")
+    element = added[0]
+    region_id = element.get("id")
     if not region_id:
         raise ValueError(
-            f"A region's root <{roots[0].tag}> must have an id attribute"
+            f"A region's root <{element.tag}> must have an id attribute"
         )
-    return Region(region_id, doc.to_html())
+    # The tail is the parent's text, not part of the region.
+    detached = copy.copy(element)
+    detached.tail = None
+    return Region(
+        region_id, ET.tostring(detached, encoding="unicode", method="html")
+    )
 
 
 def document_html() -> str:
@@ -576,6 +588,19 @@ class Session:
             self.regions[region.id] = region.html
         changed, self.changed = self.changed, anyio.Event()
         changed.set()
+
+    def mount(self, component: Callable[[], None]) -> None:
+        """
+        Render a region into the current document and remember its HTML.
+        Use this for the initial render of a region a page shows, so that a
+        browser connecting late or reconnecting is brought up to date even
+        before the first `update()`.
+        """
+        parent = node.get()
+        since = len(parent)
+        component()
+        region = _region_added_to(parent, since=since)
+        self.regions[region.id] = region.html
 
     def spawn(self, fn: Callable[..., Any]) -> None:
         """Start a task that ends with the session."""

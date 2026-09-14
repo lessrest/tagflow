@@ -9,7 +9,15 @@ from starlette.websockets import WebSocketDisconnect
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from tagflow import Live, Region, Session, render_region, tag, text
+from tagflow import (
+    Live,
+    Region,
+    Session,
+    document,
+    render_region,
+    tag,
+    text,
+)
 
 
 def counter(value: int) -> None:
@@ -47,11 +55,18 @@ def live_app(grace: float = 30.0) -> tuple[Starlette, Live]:
     """A page with two regions and endpoints that drive updates."""
     live = Live(grace=grace)
     sessions: dict[str, Session] = {}
+    pages: dict[str, str] = {}
 
     async def page(request: Request) -> PlainTextResponse:
         session = await live.session()
         sessions[request.query_params["name"]] = session
-        session.update(lambda: counter(0), lambda: status("ready"))
+        with document() as doc:
+            with tag.body():
+                session.client_tag()
+                session.mount(lambda: counter(0))
+                text("trailing text belongs to the body")
+        session.update(lambda: status("ready"))
+        pages[session.id] = doc.to_html()
         return PlainTextResponse(session.id)
 
     async def bump(request: Request) -> PlainTextResponse:
@@ -72,6 +87,7 @@ def live_app(grace: float = 30.0) -> tuple[Starlette, Live]:
             Route("/cancel", cancel),
         ],
     )
+    app.state.pages = pages
     return app, live
 
 
@@ -88,6 +104,28 @@ def test_unknown_session_is_closed_as_expired():
             with pytest.raises(WebSocketDisconnect) as closed:
                 ws.receive_json()
             assert closed.value.code == 4001
+
+
+def test_mount_renders_into_the_page_and_records_the_region():
+    app, live = live_app()
+    with TestClient(app) as client:
+        session_id = client.get("/page", params={"name": "a"}).text
+        assert app.state.pages[session_id] == (
+            f'<body><tagflow-client session-id="{session_id}">'
+            '</tagflow-client><output id="counter">0</output>'
+            "trailing text belongs to the body</body>"
+        )
+        # Recorded without the body's trailing text, ready for a late
+        # connection even though update() never touched it.
+        assert live._sessions[session_id].regions["counter"] == (
+            '<output id="counter">0</output>'
+        )
+        with client.websocket_connect(Live.SOCKET) as ws:
+            ws.send_json({"id": session_id})
+            assert morphs(ws.receive_json()) == {
+                "counter": '<output id="counter">0</output>',
+                "status": '<p id="status">ready</p>',
+            }
 
 
 def test_connection_receives_current_regions_then_changes():

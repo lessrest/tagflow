@@ -318,7 +318,7 @@ async def page(request):
                 live.script_tag()
             with tag.body():
                 session.client_tag()   # outside every region
-                counter(0)
+                session.mount(lambda: counter(0))
 
     session.spawn(count)
     return render_response(request, content, doctype=True, cache_control="no-store")
@@ -330,7 +330,8 @@ What the server keeps is the latest HTML of each region, not a copy of the
 browser's DOM. That makes the connection lifecycle simple to state:
 
 - A connection first receives every region it has not seen at its current
-  HTML, then one update per change. `update(a, b)` arrives as one message and
+  HTML (`mount()` records a region's initial render so this covers a page
+  that has never been updated), then one update per change. `update(a, b)` arrives as one message and
   the browser applies it atomically (in a view transition where supported).
 - Re-rendering identical HTML sends nothing. Changes made while no browser is
   attached are coalesced, not queued.
